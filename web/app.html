@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#0e6f67">
+  <meta name="description" content="REBOOT, le suivi du budget du foyer semaine après semaine.">
+  <meta name="reboot-build" content="2026-08-07-ui-3">
+  <title>REBOOT — Aujourd'hui</title>
+  <link rel="stylesheet" href="app.css">
+  <style>.recent-labels{display:flex;gap:7px;flex-wrap:wrap;margin-top:8px}.recent-label{border:1px solid #b7d8ce;border-radius:999px;background:#dff1e9;color:#084e4a;padding:7px 11px;font:700 12px Arial,sans-serif}.recent-label:hover{background:#c9e9df}.reserve-deduction{color:#f3d27b;font:700 11px Arial,sans-serif;margin-top:10px}.reserve-impact{padding:12px;border:1px solid #e6bd73;border-radius:9px;background:#fff5df;color:#704d1d;font:700 12px/1.4 Arial,sans-serif;margin:10px 0 18px}.reserve-impact strong{display:block;font-size:15px;margin-top:3px}.reserve-bank-warning{padding:13px;border:2px solid #b42318;border-radius:9px;background:#fff0ee;color:#8e2a21;font:800 13px/1.4 Arial,sans-serif;margin-top:12px}.reserve-bank-warning.hidden{display:none}</style>
+  <link rel="manifest" href="manifest.webmanifest">
+</head>
+<body>
+  <header class="app-header">
+    <a class="brand" href="app.html" aria-label="REBOOT, accueil">
+      <span class="brand-mark">R</span>
+      <span><strong>REBOOT</strong><small>Le budget du foyer, sans détour</small></span>
+    </a>
+    <nav class="header-actions" aria-label="Navigation principale">
+      <a class="text-link" href="index.html">La méthode</a>
+      <a class="text-link" href="calculateur.html">Préparer le budget</a>
+      <button class="icon-button" id="settingsButton" type="button" aria-label="Ouvrir les réglages" title="Réglages">⚙</button>
+    </nav>
+  </header>
+
+  <main class="shell">
+    <section class="intro-row">
+      <div>
+        <p class="kicker">Aujourd'hui</p>
+        <h1>Une semaine lisible.</h1>
+        <p class="intro-copy">Le montant disponible jusqu'au prochain jour REBOOT, avec les dépenses qui comptent vraiment.</p>
+      </div>
+      <div class="sync-state" id="freshness" aria-live="polite"><span class="status-dot"></span>Local uniquement</div>
+    </section>
+
+    <section class="dashboard-grid" aria-label="Résumé du cycle">
+      <article class="balance-panel">
+        <div class="panel-topline"><span id="cycleLabel">Cycle en cours</span><span id="cycleDates">—</span></div>
+        <p class="balance-label">Il vous reste</p>
+        <p class="balance-value" id="remaining">0,00 €</p>
+        <p class="balance-context"><span id="budgetTotal">0,00 €</span> disponibles <span class="separator">·</span> <span id="daysLeft">—</span></p>
+        <div class="balance-track" aria-hidden="true"><span id="balanceTrack"></span></div>
+        <div class="balance-footer"><span>Repère moyen</span><strong id="dailyGuide">0,00 € / jour</strong></div>
+        <div class="reserve-deduction hidden" id="reserveDeduction"></div>
+      </article>
+      <article class="signal-panel">
+        <div class="signal-heading"><span class="signal-icon">!</span><div><p class="panel-label">À garder en tête</p><h2 id="signalTitle">Configurez votre semaine</h2></div></div>
+        <p id="signalText">Commencez par définir le budget et le jour REBOOT de votre foyer.</p>
+      </article>
+    </section>
+
+    <section class="content-grid">
+      <div class="main-column">
+        <div class="section-heading"><div><p class="kicker">Suivi du cycle</p><h2>Les dernières dépenses</h2></div><button class="button button-primary" id="addExpenseButton" type="button"><span aria-hidden="true">＋</span> Ajouter</button></div>
+        <div class="expense-list" id="expenseList" aria-live="polite"></div>
+        <div class="empty-state" id="emptyState"><div class="empty-mark">＋</div><h3>Rien n'est enregistré ici</h3><p>Une dépense, un libellé, et vous savez où vous en êtes.</p><button class="button button-secondary" id="emptyAddButton" type="button">Ajouter une dépense</button></div>
+      </div>
+      <aside class="side-column">
+        <section class="side-section"><div class="section-heading compact"><div><p class="kicker">Réserves</p><h2>Ce qui est déjà prévu</h2></div><button class="icon-button subtle" id="addReserveButton" type="button" aria-label="Ajouter une réserve" title="Ajouter une réserve">＋</button></div><div id="reserveList" class="reserve-list"></div></section>
+        <section class="side-section review-card"><p class="kicker">Contrôle</p><h2>État du suivi</h2><div class="review-line"><span class="review-dot good"></span><span id="reviewText">Suivi local déclaratif</span></div><p class="muted">L'import bancaire reste facultatif. Vos données ne quittent pas ce navigateur.</p><a href="calculateur.html" class="arrow-link">Vérifier les montants <span aria-hidden="true">→</span></a></section>
+      </aside>
+    </section>
+  </main>
+
+  <dialog id="expenseDialog" class="dialog">
+    <form method="dialog" id="expenseForm" novalidate>
+      <div class="dialog-header"><div><p class="kicker">Nouvelle dépense</p><h2>Ajouter au cycle</h2></div><button class="close-button" formnovalidate value="cancel" type="submit" aria-label="Fermer">×</button></div>
+      <div class="field"><label for="expenseAmount">Montant</label><div class="money-input"><input id="expenseAmount" name="amount" type="number" inputmode="decimal" min="0.01" step="0.01" placeholder="0,00" required><span>€</span></div></div>
+      <div class="field"><label for="expenseLabel">Libellé</label><input id="expenseLabel" name="label" type="text" maxlength="80" placeholder="Courses, essence, pharmacie..." required><div id="recentLabels" class="recent-labels" aria-label="Libellés récents"></div></div>
+      <fieldset class="field"><legend>Ce montant est financé par</legend><div class="choice-list"><label class="choice"><input type="radio" name="funding" value="weekly" checked><span><strong>Budget de la semaine</strong><small>Réduit immédiatement le restant.</small></span></label><label class="choice hidden" id="reserveFundingChoice"><input type="radio" name="funding" value="reserve"><span><strong>Une réserve</strong><small>Utilise une somme déjà mise de côté.</small></span></label></div></fieldset>
+      <div class="field hidden" id="reserveChoice"><label for="expenseReserve">Réserve utilisée</label><select id="expenseReserve" name="reserve"></select></div>
+      <div class="dialog-actions"><button class="button button-secondary" formnovalidate value="cancel" type="submit">Annuler</button><button class="button button-primary" id="saveExpenseButton" value="default" type="submit">Enregistrer</button></div>
+    </form>
+  </dialog>
+
+  <dialog id="welcomeDialog" class="dialog welcome-dialog">
+    <form method="dialog" id="welcomeForm" novalidate>
+      <div class="dialog-header"><div><p class="kicker">Bienvenue dans REBOOT</p><h2>Commençons par votre semaine.</h2></div><button class="close-button" formnovalidate value="cancel" type="submit" aria-label="Fermer">×</button></div>
+      <p class="dialog-lead">Pour afficher votre restant, REBOOT a besoin du budget hebdomadaire du foyer et du jour où votre cycle recommence.</p>
+      <div class="welcome-options"><button class="welcome-option" id="startLocalButton" value="local" type="button"><strong>Configurer sur cet appareil</strong><small>Vos données restent locales et chiffrées dans ce navigateur.</small></button><button class="welcome-option" id="connectDriveButton" value="drive" type="button"><strong>Récupérer depuis Google Drive</strong><small>Connexion directe navigateur → Google Drive, sans serveur REBOOT.</small><em>Connexion Drive à intégrer</em></button></div>
+    </form>
+  </dialog>
+
+  <dialog id="settingsDialog" class="dialog">
+    <form method="dialog" id="settingsForm" novalidate>
+      <div class="dialog-header"><div><p class="kicker">Réglages du foyer</p><h2>Le cycle REBOOT</h2></div><button class="close-button" formnovalidate value="cancel" type="submit" aria-label="Fermer">×</button></div>
+      <div class="field"><label for="householdName">Nom du foyer</label><input id="householdName" type="text" maxlength="60" placeholder="Notre foyer"></div>
+      <div class="field"><label for="weeklyBudget">Budget hebdomadaire avant réserves</label><div class="money-input"><input id="weeklyBudget" type="number" min="0" step="0.01" required><span>€</span></div><small class="field-help">Le calculateur peut fournir ce montant. Les réserves décidées ensuite seront déduites automatiquement.</small></div>
+      <div class="field"><label for="rebootDay">Jour REBOOT</label><select id="rebootDay" required><option value="">Choisir un jour</option><option value="1">Lundi</option><option value="2">Mardi</option><option value="3">Mercredi</option><option value="4">Jeudi</option><option value="5">Vendredi</option><option value="6">Samedi</option><option value="0">Dimanche</option></select></div>
+      <div class="dialog-actions"><button class="button button-secondary" formnovalidate value="cancel" type="submit">Annuler</button><button class="button button-primary" value="default" type="submit">Enregistrer</button></div>
+    </form>
+  </dialog>
+
+  <dialog id="reserveDialog" class="dialog">
+    <form method="dialog" id="reserveForm" novalidate>
+      <div class="dialog-header"><div><p class="kicker">Nouvelle réserve</p><h2>Mettre de côté</h2></div><button class="close-button" formnovalidate value="cancel" type="submit" aria-label="Fermer">×</button></div>
+      <div class="field"><label for="reserveName">Nom</label><input id="reserveName" type="text" maxlength="50" placeholder="Noël, voiture, vacances..." required></div>
+      <div class="field"><label for="reserveBalance">Solde de départ</label><div class="money-input"><input id="reserveBalance" type="number" min="0" step="0.01" value="0"><span>€</span></div></div>
+      <div class="field"><label for="reserveMonthly">Versement mensuel souhaité</label><div class="money-input"><input id="reserveMonthly" type="number" min="0" step="0.01" placeholder="125"><span>€</span></div></div>
+      <div class="field"><label for="reserveTarget">Ou objectif sur un an</label><div class="money-input"><input id="reserveTarget" type="number" min="0" step="0.01" placeholder="1 500"><span>€</span></div><small class="field-help">Renseignez l’un ou l’autre. Si les deux sont remplis, le versement mensuel est prioritaire.</small></div>
+      <div class="field"><label for="reserveOpenedOn">Date de début</label><input id="reserveOpenedOn" type="date" required><small class="field-help">À chaque anniversaire, le calcul repartira du solde de cette date.</small></div>
+      <div class="field"><label class="toggle"><input id="reserveReal" type="checkbox"><span class="toggle-track"></span><span>Réserve sur un compte séparé</span></label><small class="field-help">Sinon, elle sera virtuelle et suivie dans le même compte.</small></div>
+      <div class="reserve-impact" id="reserveImpact">Indiquez un versement mensuel ou un objectif annuel pour voir l’impact sur votre budget.</div>
+      <div class="reserve-bank-warning hidden" id="reserveBankWarning">Vérification importante : veuillez mettre en place un virement permanent de votre compte principal vers le compte de réserve, du montant indiqué chaque mois.</div>
+      <div class="dialog-actions"><button class="button button-secondary" formnovalidate value="cancel" type="submit">Annuler</button><button class="button button-primary" value="default" type="submit">Créer la réserve</button></div>
+    </form>
+  </dialog>
+  <script src="app.js" defer></script>
+</body>
+</html>

@@ -1,0 +1,19 @@
+services:
+  reboot-web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8080:80"
+    restart: unless-stopped
+
+  reboot-tests:
+    profiles: [test]
+    network_mode: host
+    build:
+      context: .
+      dockerfile: Dockerfile.test
+    environment:
+      BASE_URL: http://localhost:8080
+    depends_on:
+      - reboot-web

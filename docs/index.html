@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>REBOOT — Un budget simple, semaine après semaine</title>
+<style>
+:root{
+  --bg:#f4f7fb;--surface:#fff;--ink:#172033;--muted:#667085;--line:#d8e0eb;
+  --brand:#3859d6;--brand2:#7f95ef;--brand-soft:#eef2ff;
+  --good:#147a50;--good-soft:#eaf8f1;--warn:#9a5b00;--warn-soft:#fff5df;
+  --danger:#b42318;--danger-soft:#fff0ee;--info:#1769aa;--info-soft:#eaf5ff;
+  --shadow:0 18px 50px rgba(35,48,82,.10);--radius:20px
+}
+*{box-sizing:border-box}html{scroll-behavior:smooth}body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.55 Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+a{color:var(--brand)}button,input,select,textarea{font:inherit}.hidden{display:none!important}
+.topbar{position:sticky;top:0;z-index:30;background:rgba(255,255,255,.96);backdrop-filter:blur(14px);border-bottom:1px solid var(--line)}
+.topbar-inner{max-width:1180px;margin:auto;padding:12px 20px;display:flex;align-items:center;gap:14px}.brand{display:flex;align-items:center;gap:11px;text-decoration:none;color:var(--ink)}.mark{width:38px;height:38px;border-radius:12px;display:grid;place-items:center;background:linear-gradient(135deg,var(--brand),var(--brand2));color:#fff;font-weight:950}.brand strong{display:block}.brand small{display:block;color:var(--muted);font-size:.75rem}.nav{margin-left:auto;display:flex;gap:8px;align-items:center;flex-wrap:wrap}.nav a,.btn{border-radius:11px;padding:10px 14px;font-weight:850;text-decoration:none;border:1px solid transparent}.nav a:hover{background:var(--brand-soft)}.btn{cursor:pointer}.btn.primary{background:var(--brand);color:#fff}.btn.secondary{background:#fff;border-color:var(--line);color:var(--ink)}.btn.ghost{background:transparent;color:var(--muted)}.btn.small{padding:8px 11px;font-size:.84rem}.btn:disabled{opacity:.45;cursor:not-allowed}
+.container{max-width:1180px;margin:auto;padding:0 20px}.hero{padding:72px 0 44px}.hero-grid{display:grid;grid-template-columns:1.2fr .8fr;gap:32px;align-items:center}.eyebrow{font-size:.78rem;text-transform:uppercase;letter-spacing:.11em;color:var(--brand);font-weight:900;margin-bottom:8px}h1,h2,h3{line-height:1.16;margin:0}h1{font-size:clamp(2.35rem,5vw,4.4rem);letter-spacing:-.055em}h2{font-size:clamp(1.7rem,3.5vw,2.7rem);letter-spacing:-.035em}h3{font-size:1.12rem}.lead{font-size:1.12rem;color:#4b576d;max-width:720px;margin:16px 0 24px}.hero-card,.card{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow)}.hero-card{padding:24px}.big-number{font-size:2.4rem;font-weight:950;letter-spacing:-.04em}.muted{color:var(--muted)}.section{padding:56px 0}.section.alt{background:#fff}.section-head{max-width:760px;margin-bottom:26px}.grid-3{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px}.grid-2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px}.card{padding:22px}.card p{color:#4f5b71}.step-num{width:42px;height:42px;border-radius:13px;display:grid;place-items:center;background:var(--brand-soft);color:var(--brand);font-weight:950;margin-bottom:14px}.callout{padding:15px 17px;border-radius:15px;border:1px solid;margin:16px 0}.callout.good{background:var(--good-soft);border-color:#b9e2ce;color:#205f45}.callout.info{background:var(--info-soft);border-color:#b7dcf6;color:#225f8a}.callout.warn{background:var(--warn-soft);border-color:#efd79d;color:#765015}.callout.danger{background:var(--danger-soft);border-color:#efc1bc;color:#8e2a21}
+details{border:1px solid var(--line);border-radius:15px;background:#fff;margin:10px 0;overflow:hidden}summary{cursor:pointer;padding:16px 18px;font-weight:900}.details-body{padding:0 18px 18px;color:#4f5b71}.pill{display:inline-block;padding:5px 9px;border-radius:999px;background:var(--brand-soft);color:var(--brand);font-size:.78rem;font-weight:850}.formula{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;background:#111827;color:#eef2ff;border-radius:14px;padding:16px;overflow:auto}.footer-site{padding:32px 0 50px;color:var(--muted);border-top:1px solid var(--line);margin-top:40px}
+.wizard-wrap{max-width:1180px;margin:auto;padding:18px 20px 50px}.wizard-head{display:flex;justify-content:space-between;gap:16px;align-items:end;margin:24px 0 14px}.progress{height:8px;background:#e7ebf2;border-radius:999px;overflow:hidden}.progress>div{height:100%;background:linear-gradient(90deg,var(--brand),var(--brand2));transition:width .2s}.wizard-layout{display:grid;grid-template-columns:minmax(0,760px) minmax(270px,1fr);gap:22px;align-items:start}.question-card{padding:clamp(22px,4vw,38px);min-height:560px;display:flex;flex-direction:column}.side-card{padding:20px;position:sticky;top:84px}.side-card p,.side-card li{color:#4f5b71}.footer-actions{margin-top:auto;padding-top:26px;display:flex;justify-content:space-between;gap:12px}.choice-grid{display:grid;gap:11px}.choice{display:flex;gap:12px;padding:15px;border:1px solid var(--line);border-radius:15px;background:#fff;cursor:pointer}.choice:has(input:checked){border-color:#7890ee;background:var(--brand-soft)}.choice input{accent-color:var(--brand);margin-top:4px}.choice strong{display:block}.choice span{display:block;color:var(--muted);font-size:.88rem}.field{margin:13px 0}.label{display:block;font-weight:850;margin-bottom:7px}.help{display:block;color:var(--muted);font-size:.84rem;margin-top:6px}.input,.select,textarea{width:100%;border:1px solid #cfd7e4;border-radius:13px;padding:12px 13px;background:#fff;color:var(--ink);outline:none}.input:focus,.select:focus,textarea:focus{border-color:#7890ee;box-shadow:0 0 0 4px rgba(56,89,214,.11)}.field-row{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.field-row.three{grid-template-columns:repeat(3,minmax(0,1fr))}.money{position:relative}.money .input{padding-right:42px}.money::after{content:'€';position:absolute;right:15px;top:50%;transform:translateY(-50%);color:var(--muted);font-weight:800}.table-wrap{overflow:auto;border:1px solid var(--line);border-radius:15px;background:#fff}.table{width:100%;border-collapse:collapse;min-width:680px}.table th,.table td{padding:11px 12px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}.table th{font-size:.78rem;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);background:#f8fafc}.table tr:last-child td{border-bottom:0}.group-card{border:1px solid var(--line);border-radius:16px;padding:15px;margin:12px 0;background:#fff}.group-head{display:flex;justify-content:space-between;gap:12px;align-items:start}.occurrences{display:flex;gap:7px;flex-wrap:wrap;margin:10px 0}.occ{background:#f3f6fb;border-radius:999px;padding:6px 9px;font-size:.78rem}.badge{display:inline-block;border-radius:999px;padding:5px 9px;font-size:.76rem;font-weight:850}.badge.good{background:var(--good-soft);color:var(--good)}.badge.warn{background:var(--warn-soft);color:var(--warn)}.badge.info{background:var(--info-soft);color:var(--info)}.calendar{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));gap:6px;align-items:end}.month{border:1px solid var(--line);border-radius:11px;padding:8px 5px;min-height:92px;display:flex;flex-direction:column;justify-content:flex-end;text-align:center}.month .bar{margin:0 auto 6px;width:60%;border-radius:7px 7px 3px 3px;background:#cfd7e8;min-height:3px}.month.hot{background:#fff8e8;border-color:#e4b45d}.month.hot .bar{background:#efaa3b}.month .m{font-weight:900;font-size:.72rem}.month .amt{font-size:.76rem;font-weight:950}.result-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:11px}.result-card{border:1px solid var(--line);border-radius:15px;padding:15px;background:#fff}.result-card .k{font-size:.78rem;color:var(--muted)}.result-card .v{font-size:1.45rem;font-weight:950;letter-spacing:-.03em}.result-hero{border-radius:18px;padding:22px;background:linear-gradient(135deg,#263fba,#5f78e7);color:#fff;margin-bottom:16px}.result-hero .big{font-size:clamp(2.2rem,5vw,3.5rem);font-weight:950}.toolbar{display:flex;gap:8px;flex-wrap:wrap}.error-list{display:none}.error-list.show{display:block}
+@media(max-width:900px){.hero-grid,.wizard-layout,.grid-3,.grid-2{grid-template-columns:1fr}.side-card{position:static}.hero{padding-top:42px}.result-grid{grid-template-columns:1fr 1fr}}
+@media(max-width:620px){.field-row,.field-row.three,.result-grid{grid-template-columns:1fr}.nav a:not(.btn){display:none}.question-card{min-height:auto}.calendar{grid-template-columns:repeat(4,1fr)}}
+</style>
+</head>
+<body>
+<header class="topbar"><div class="topbar-inner">
+<a class="brand" href="index.html"><span class="mark">R</span><span><strong>REBOOT</strong><small>Regain Expenses, Back On Our Track</small></span></a>
+<nav class="nav"><a href="#methode">La méthode</a><a href="#cas">Cas particuliers</a><a href="app.html" class="btn secondary">Suivre ma semaine</a><a href="calculateur.html" class="btn primary">Calculer mon budget</a></nav>
+</div></header>
+
+<main>
+<section class="hero"><div class="container hero-grid">
+<div>
+<div class="eyebrow">Une méthode de budget sur 52 semaines</div>
+<h1>Décider une semaine à la fois.</h1>
+<p class="lead">REBOOT transforme vos revenus, vos charges mensuelles et vos dépenses annuelles en un montant hebdomadaire simple à piloter.</p>
+<div class="toolbar"><a class="btn primary" href="app.html">Ouvrir mon suivi</a><a class="btn secondary" href="calculateur.html">Préparer mon budget</a></div>
+</div>
+<div class="hero-card">
+<span class="pill">Exemple</span>
+<p class="muted">Après calcul</p>
+<div class="big-number">120 € / semaine</div>
+<p>Vous n’avez plus à vous demander combien vous pouvez dépenser ce mois-ci. Vous suivez uniquement votre enveloppe jusqu’au prochain cycle.</p>
+<div class="callout good"><strong>Le reste est déjà prévu.</strong><br>Charges mensuelles, dépenses annuelles et tampon de démarrage ont été traités avant.</div>
+</div>
+</div></section>
+
+<section id="methode" class="section alt"><div class="container">
+<div class="section-head"><div class="eyebrow">La méthode</div><h2>Trois calculs, un seul montant au quotidien</h2><p class="lead">La complexité reste dans la préparation. Le quotidien reste simple.</p></div>
+<div class="grid-3">
+<div class="card"><div class="step-num">1</div><h3>Calculer le budget durable</h3><p>Les revenus annuels financent d’abord les charges mensuelles et les dépenses prévisibles de l’année. Le solde est divisé par 52.</p><details><summary>Voir le calcul</summary><div class="details-body"><div class="formula">Revenus annuels
+− charges mensuelles × 12
+− dépenses annuelles non déjà financées
+= reste à vivre annuel
+÷ 52</div></div></details></div>
+<div class="card"><div class="step-num">2</div><h3>Vérifier le démarrage</h3><p>Une dépense proche peut arriver avant que REBOOT ait eu le temps de constituer toute la somme nécessaire.</p><details><summary>Qu’est-ce que le tampon ?</summary><div class="details-body"><p>Le tampon est un complément temporaire propre à la première année. Il finance uniquement ce qui manquera à la date d’une dépense annuelle.</p><p>Il peut être nul si vous commencez assez tôt.</p></div></details></div>
+<div class="card"><div class="step-num">3</div><h3>Piloter chaque semaine</h3><p>Vous saisissez vos dépenses courantes et regardez seulement ce qu’il reste jusqu’au prochain cycle.</p><details><summary>Et le solde bancaire ?</summary><div class="details-body"><p>Le solde peut monter et descendre parce qu’il contient aussi les sommes destinées aux futures dépenses annuelles. Une somme présente sur le compte n’est pas forcément disponible.</p></div></details></div>
+</div>
+</div></section>
+
+<section class="section"><div class="container">
+<div class="section-head"><div class="eyebrow">Le tampon de démarrage</div><h2>Chaque dépense est calculée à sa propre date</h2><p class="lead">REBOOT ne mélange pas une dépense d’août avec une dépense de décembre. Il calcule séparément ce qui aura été constitué pour chacune.</p></div>
+<div class="grid-2">
+<div class="card"><h3>Rentrée scolaire — 300 € en août</h3><p>Si vous commencez en janvier, une partie aura été constituée chaque semaine. Le calculateur indique le complément encore nécessaire en août.</p><div class="callout info"><strong>Exemple :</strong> REBOOT aura constitué 173 €. Il faudra prévoir 127 € en complément.</div></div>
+<div class="card"><h3>Noël — 500 € en décembre</h3><p>La période de constitution est plus longue. Le complément nécessaire peut donc être beaucoup plus faible.</p><div class="callout info"><strong>Exemple :</strong> REBOOT aura constitué 462 €. Il faudra prévoir 38 € en complément.</div></div>
+</div>
+<details><summary>Pourquoi ne pas additionner simplement toutes les dépenses ?</summary><div class="details-body"><p>Parce qu’elles n’arrivent pas au même moment. Le calculateur affiche le complément de chaque échéance, le total des apports de première année et l’effort hebdomadaire nécessaire pour les constituer juste à temps.</p></div></details>
+</div></section>
+
+<section id="cas" class="section alt"><div class="container">
+<div class="section-head"><div class="eyebrow">Cas particuliers</div><h2>Les pièges les plus fréquents</h2></div>
+<details><summary>J’épargne déjà chaque mois pour Noël ou les anniversaires</summary><div class="details-body"><p>La somme versée chaque mois est déjà une charge mensuelle. Les achats payés avec cette réserve ne doivent pas être comptés une deuxième fois comme dépenses annuelles à financer.</p><p>Si la réserve ne couvre qu’une partie de la dépense, renseignez seulement la partie qui manque.</p></div></details>
+<details><summary>Je reçois une aide dédiée à la rentrée</summary><div class="details-body"><p>Indiquez l’aide seulement si elle est disponible avant ou au moment des achats. Le calculateur finance uniquement la charge nette réellement supportée par le foyer.</p></div></details>
+<details><summary>Je suis déjà à découvert tous les mois</summary><div class="details-body"><p>Le tampon de démarrage et la remontée du découvert sont deux sujets différents. REBOOT calcule d’abord le budget et les premières échéances. Vous pouvez ensuite choisir un effort hebdomadaire séparé pour améliorer progressivement le niveau du compte.</p></div></details>
+<details><summary>Une grosse dépense arrive dans quelques semaines</summary><div class="details-body"><p>Le calculateur peut conclure qu’un effort très important est nécessaire. Ce n’est pas la méthode qui crée le problème : la dépense est déjà proche. Les choix réalistes sont alors d’utiliser une réserve, réduire fortement le budget, fractionner ou reporter la dépense si possible, ou commencer REBOOT après l’échéance.</p></div></details>
+<details><summary>Je ne veux pas importer mes opérations bancaires</summary><div class="details-body"><p>La saisie manuelle reste possible. Le résultat dépendra toutefois de l’exhaustivité des montants déclarés. L’import CSV sert de contrôle local : les données restent dans le navigateur et ne sont envoyées nulle part.</p></div></details>
+</div></section>
+
+<section class="section"><div class="container hero-card">
+<div class="grid-2"><div><div class="eyebrow">Calculateur local</div><h2>Importez un CSV ou saisissez tout à la main</h2><p class="lead">Le calculateur détecte les revenus et dépenses récurrents, vous demande de confirmer, puis calcule le budget semaine et le tampon de démarrage.</p></div><div style="display:grid;place-items:center"><a class="btn primary" href="calculateur.html">Ouvrir le calculateur</a></div></div>
+<div class="callout good"><strong>Confidentialité :</strong> le fichier est traité uniquement dans votre navigateur. Rien n’est envoyé à un serveur.</div>
+</div></section>
+</main>
+<footer class="footer-site"><div class="container">REBOOT — méthode et calculs locaux. Ce prototype n’est pas un conseil financier professionnel.</div></footer>
+</body></html>
