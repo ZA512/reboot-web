@@ -6,6 +6,7 @@ Application web statique local-first pour suivre le budget hebdomadaire d'un foy
 
 - `web/` : application exécutable, calculateur, PWA et ressources servies par Nginx.
 - `docs/` : PRD, documentation et notes de conception.
+- `dev-server.mjs` : serveur web local de développement, sans Docker.
 - `Dockerfile` : image Nginx statique.
 - `docker-compose.yml` : environnement local de test.
 
@@ -14,10 +15,18 @@ Application web statique local-first pour suivre le budget hebdomadaire d'un foy
 Depuis la racine du projet :
 
 ```bash
-docker compose up --build
+node dev-server.mjs
 ```
 
-Puis ouvrir : <http://localhost:8080/app.html>
+Puis ouvrir : <http://127.0.0.1:4173/app.html>
+
+Le serveur ne dépend pas de Docker et désactive le cache HTTP. Il utilise une origine différente de l'ancienne instance Docker (`localhost:8080`), ce qui évite de réutiliser son service worker ou son cache PWA. Pour choisir un autre port :
+
+```bash
+PORT=4174 node dev-server.mjs
+```
+
+Docker reste disponible uniquement pour vérifier l'image de production et exécuter les tests navigateur.
 
 ## Tests navigateur dans Docker
 

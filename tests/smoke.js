@@ -25,6 +25,11 @@ try {
   await assertContains(page.locator('#budgetTotal'), '600,00');
   console.log('PASS budget and reboot day are saved');
 
+  await page.goto(`${baseUrl}/`, { waitUntil: 'networkidle' });
+  await page.waitForURL('**/app.html');
+  await assertContains(page.locator('#budgetTotal'), '600,00');
+  console.log('PASS configured local tracker opens from root');
+
   await page.locator('#addReserveButton').click();
   await page.locator('#reserveName').fill('Noël & anniversaires');
   await page.locator('#reserveBalance').fill('0');

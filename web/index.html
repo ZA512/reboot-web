@@ -3,6 +3,7 @@
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>REBOOT — Un budget simple, semaine après semaine</title>
+<script src="entry.js" defer></script>
 <style>
 :root{
   --bg:#f4f7fb;--surface:#fff;--ink:#172033;--muted:#667085;--line:#d8e0eb;
@@ -21,6 +22,9 @@ details{border:1px solid var(--line);border-radius:15px;background:#fff;margin:1
 @media(max-width:900px){.hero-grid,.wizard-layout,.grid-3,.grid-2{grid-template-columns:1fr}.side-card{position:static}.hero{padding-top:42px}.result-grid{grid-template-columns:1fr 1fr}}
 @media(max-width:620px){.field-row,.field-row.three,.result-grid{grid-template-columns:1fr}.nav a:not(.btn){display:none}.question-card{min-height:auto}.calendar{grid-template-columns:repeat(4,1fr)}}
 </style>
+<style>
+.start-grid{display:grid;gap:10px;margin-top:22px}.start-choice{display:grid;grid-template-columns:42px minmax(0,1fr) auto;align-items:center;gap:14px;padding:16px 17px;border:1px solid var(--line);border-radius:14px;background:#fff;color:var(--ink);text-decoration:none;transition:transform .16s ease,box-shadow .16s ease,border-color .16s ease}.start-choice:hover{transform:translateY(-1px);border-color:#9caeef;box-shadow:0 10px 20px rgba(35,48,82,.10)}.start-choice.primary{background:var(--brand);border-color:var(--brand);color:#fff}.start-choice strong,.start-choice small{display:block}.start-choice strong{font-size:.98rem}.start-choice small{font-size:.82rem;color:var(--muted);margin-top:3px}.start-choice.primary small{color:#e4e9ff}.start-icon{display:grid;place-items:center;width:42px;height:42px;border-radius:10px;background:var(--brand-soft);color:var(--brand);font-size:1.15rem;font-weight:900}.start-choice.primary .start-icon{background:rgba(255,255,255,.18);color:#fff}.start-arrow{font-size:1.35rem;font-weight:900}@media(max-width:520px){.start-choice{grid-template-columns:42px minmax(0,1fr)}.start-arrow{display:none}}
+</style>
 </head>
 <body>
 <header class="topbar"><div class="topbar-inner">
@@ -31,10 +35,14 @@ details{border:1px solid var(--line);border-radius:15px;background:#fff;margin:1
 <main>
 <section class="hero"><div class="container hero-grid">
 <div>
-<div class="eyebrow">Une méthode de budget sur 52 semaines</div>
-<h1>Décider une semaine à la fois.</h1>
-<p class="lead">REBOOT transforme vos revenus, vos charges mensuelles et vos dépenses annuelles en un montant hebdomadaire simple à piloter.</p>
-<div class="toolbar"><a class="btn primary" href="app.html">Ouvrir mon suivi</a><a class="btn secondary" href="calculateur.html">Préparer mon budget</a></div>
+<div class="eyebrow">Votre point de départ</div>
+<h1>Une semaine à la fois.</h1>
+<p class="lead">Commencez par ce qui vous ressemble. REBOOT garde les calculs de préparation à part pour que le suivi quotidien reste simple.</p>
+<div class="start-grid" aria-label="Choisir un parcours">
+<a class="start-choice primary" href="calculateur.html"><span class="start-icon" aria-hidden="true">1</span><span><strong>Je prépare mon budget</strong><small>Calculez un montant hebdomadaire avant de démarrer.</small></span><span class="start-arrow" aria-hidden="true">›</span></a>
+<a class="start-choice" href="app.html"><span class="start-icon" aria-hidden="true">€</span><span><strong>Je connais déjà mon budget</strong><small>Configurez directement votre semaine REBOOT.</small></span><span class="start-arrow" aria-hidden="true">›</span></a>
+<a class="start-choice" href="#methode"><span class="start-icon" aria-hidden="true">?</span><span><strong>Je découvre la méthode</strong><small>Comprendre le budget hebdomadaire avant de choisir.</small></span><span class="start-arrow" aria-hidden="true">›</span></a>
+</div>
 </div>
 <div class="hero-card">
 <span class="pill">Exemple</span>

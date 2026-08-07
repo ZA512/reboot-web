@@ -408,11 +408,10 @@ $('#reserveForm').addEventListener('submit', saveReserve);
 document.querySelectorAll('input[name="funding"]').forEach((input) => input.addEventListener('change', toggleReserveChoice));
 ['reserveMonthly', 'reserveTarget', 'reserveReal'].forEach((id) => $(`#${id}`).addEventListener('input', updateReservePreview));
 $('#startLocalButton').addEventListener('click', () => { $('#welcomeDialog').close(); openSettings(); });
-$('#connectDriveButton').addEventListener('click', () => { $('#connectDriveButton').querySelector('em').textContent = 'Le module Google Drive sera activé dans la prochaine étape.'; });
 
 async function init() {
   try {
-    if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js?v=3', { updateViaCache: 'none' }).catch(() => {});
+    if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js?v=4', { updateViaCache: 'none' }).catch(() => {});
     state = await loadState();
     state.baseWeeklyBudgetMinor ||= state.weeklyBudgetMinor || 0;
     state.configured = Boolean(state.baseWeeklyBudgetMinor > 0 && state.rebootDay !== null && state.rebootDay !== undefined && state.rebootDay !== '');
