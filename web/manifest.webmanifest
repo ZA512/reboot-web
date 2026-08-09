@@ -1,1 +1,1 @@
-{"name":"REBOOT","short_name":"REBOOT","description":"Le suivi du budget du foyer, semaine après semaine.","lang":"fr-FR","start_url":"./","display":"standalone","background_color":"#f5f6f1","theme_color":"#0e6f67","icons":[]}
+{"name":"REBOOT","short_name":"REBOOT","description":"Le suivi du budget du foyer, semaine après semaine.","lang":"fr-FR","start_url":"./app.html","scope":"./","display":"standalone","background_color":"#f5f6f1","theme_color":"#0e6f67","icons":[{"src":"icon.svg","sizes":"any","type":"image/svg+xml","purpose":"any maskable"}]}

@@ -1,4 +1,4 @@
-const CACHE_NAME = 'reboot-shell-v4';
+const CACHE_NAME = 'reboot-shell-v21';
 const SHELL = [
   './app.html',
   './version.txt',
@@ -6,6 +6,14 @@ const SHELL = [
   './app.js',
   './entry.js',
   './secure-storage.js',
+  './archive.js',
+  './google-config.js',
+  './drive.js',
+  './icon.svg',
+  './verifier.html',
+  './historique.html',
+  './sauvegarde.html',
+  './drive.html',
   './manifest.webmanifest',
   './index.html',
   './calculateur.html'
@@ -21,9 +29,9 @@ self.addEventListener('activate', (event) => {
 
 self.addEventListener('fetch', (event) => {
   if (event.request.method !== 'GET' || new URL(event.request.url).origin !== self.location.origin) return;
-  event.respondWith(caches.match(event.request).then((cached) => cached || fetch(event.request).then((response) => {
+  event.respondWith(fetch(event.request).then((response) => {
     const copy = response.clone();
     caches.open(CACHE_NAME).then((cache) => cache.put(event.request, copy));
     return response;
-  })));
+  }).catch(() => caches.match(event.request)));
 });

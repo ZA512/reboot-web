@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#0e6f67">
+  <title>REBOOT — Sauvegarde chiffrée</title>
+  <style>
+    :root{--bg:#f3f7f5;--card:#fff;--ink:#17312e;--muted:#58706b;--line:#cde0d9;--brand:#0e6f67;--soft:#e7f5ef;--warn:#815112;--warnbg:#fff5df}*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif}.top{padding:16px 22px;background:#fff;border-bottom:1px solid var(--line);display:flex;gap:14px;align-items:center}.brand{font-weight:900;color:var(--ink);text-decoration:none}.brand span{display:inline-grid;place-items:center;width:34px;height:34px;margin-right:8px;border-radius:10px;background:var(--brand);color:#fff}.nav{margin-left:auto;display:flex;gap:12px;flex-wrap:wrap}.nav a{color:var(--brand);font-weight:750;text-decoration:none}.shell{max-width:900px;margin:0 auto;padding:42px 20px 72px}.kicker{margin:0;color:var(--brand);font-size:.78rem;font-weight:900;letter-spacing:.1em;text-transform:uppercase}h1{font-size:clamp(2rem,5vw,3.4rem);line-height:1.05;margin:8px 0 12px;letter-spacing:-.04em}.lead{max-width:680px;color:var(--muted);font-size:1.07rem}.grid{display:grid;grid-template-columns:1fr 1fr;gap:18px;margin-top:30px}.card{padding:24px;border:1px solid var(--line);border-radius:18px;background:var(--card);box-shadow:0 12px 30px rgba(15,61,54,.07)}h2{margin:0 0 10px;font-size:1.35rem}.field{margin-top:16px}.field label{display:block;font-weight:800;margin-bottom:6px}.field small{display:block;color:var(--muted);margin-top:6px}.input{width:100%;padding:12px;border:1px solid #aac9c0;border-radius:10px;font:inherit}.button{margin-top:18px;padding:11px 15px;border:0;border-radius:10px;background:var(--brand);color:#fff;font:800 15px system-ui;cursor:pointer}.button:disabled{opacity:.5;cursor:not-allowed}.secondary{background:#fff;color:var(--brand);border:1px solid #9fc5b9}.notice{padding:14px 15px;border:1px solid #b7dccd;border-radius:12px;background:var(--soft);color:#205848;margin-top:16px}.warning{background:var(--warnbg);border-color:#e7c984;color:var(--warn)}.hidden{display:none!important}.summary{margin-top:16px;padding:14px;border-left:4px solid var(--brand);background:#f4faf7}.check{display:flex;gap:9px;align-items:flex-start;margin-top:16px}.check input{margin-top:4px}@media(max-width:700px){.grid{grid-template-columns:1fr}.top{padding:14px}.nav{font-size:.9rem}}
+  </style>
+</head>
+<body>
+  <header class="top"><a class="brand" href="app.html"><span>R</span>REBOOT</a><nav class="nav"><a href="app.html">Suivi</a><a href="calculateur.html">Construire le budget</a><a href="verifier.html">Vérifier</a><a href="drive.html">Google Drive</a></nav></header>
+  <main class="shell">
+    <p class="kicker">Sauvegarde locale</p><h1>Votre dossier, chiffré avant de quitter l’appareil.</h1>
+    <p class="lead">La sauvegarde contient le suivi quotidien et le calculateur. Le code de récupération ne reste pas dans REBOOT : sans lui, personne ne peut lire le fichier — pas même l’application.</p>
+    <div class="grid">
+      <section class="card"><h2>Créer une sauvegarde</h2><p>Conservez le fichier et son code de récupération dans deux endroits distincts.</p>
+        <div class="field"><label for="backupCode">Code de récupération</label><input id="backupCode" class="input" autocomplete="new-password" minlength="16" placeholder="Au moins 16 caractères"><small>Vous pouvez saisir votre propre phrase, ou générer un code aléatoire.</small></div>
+        <button class="button secondary" id="generateCode" type="button">Générer un code</button>
+        <div class="field"><label for="backupCodeConfirm">Confirmer le code</label><input id="backupCodeConfirm" class="input" autocomplete="new-password" minlength="16" placeholder="Saisissez-le une seconde fois"></div>
+        <label class="check"><input id="backupAcknowledgement" type="checkbox"><span>J’ai conservé ce code. REBOOT ne pourra pas récupérer une sauvegarde si je le perds.</span></label>
+        <button class="button" id="createBackup" type="button">Télécharger la sauvegarde chiffrée</button><p id="backupStatus" class="notice hidden" aria-live="polite"></p>
+      </section>
+      <section class="card"><h2>Restaurer une sauvegarde</h2><p>Le fichier est d’abord vérifié et déchiffré. Aucune donnée n’est remplacée avant votre confirmation.</p>
+        <div class="field"><label for="archiveFile">Fichier de sauvegarde</label><input id="archiveFile" class="input" type="file" accept="application/json,.json"></div>
+        <div class="field"><label for="restoreCode">Code de récupération</label><input id="restoreCode" class="input" autocomplete="current-password" placeholder="Le code utilisé à la création"></div>
+        <button class="button secondary" id="checkArchive" type="button">Vérifier la sauvegarde</button>
+        <div id="archiveSummary" class="summary hidden" aria-live="polite"></div>
+        <label id="restoreAcknowledgementRow" class="check hidden"><input id="restoreAcknowledgement" type="checkbox"><span>Je comprends que cela remplacera les données REBOOT actuellement présentes sur cet appareil.</span></label>
+        <button class="button hidden" id="restoreArchive" type="button">Restaurer ces données</button><p id="restoreStatus" class="notice hidden" aria-live="polite"></p>
+      </section>
+    </div>
+  </main>
+  <script src="secure-storage.js"></script><script src="archive.js"></script>
+  <script>
+    (() => {
+      const $ = selector => document.querySelector(selector); let openedPayload = null;
+      const message = (element, text, warning = false) => { element.textContent = text; element.classList.toggle('warning', warning); element.classList.remove('hidden'); };
+      $('#generateCode').onclick = () => { const code = RebootArchive.recoveryCode(); $('#backupCode').value = code; $('#backupCodeConfirm').value = code; $('#backupAcknowledgement').checked = false; $('#backupCode').focus(); };
+      $('#createBackup').onclick = async () => {
+        const code = $('#backupCode').value.trim(), confirm = $('#backupCodeConfirm').value.trim();
+        if (code.length < 16) return message($('#backupStatus'), 'Utilisez un code de récupération d’au moins 16 caractères.', true);
+        if (code !== confirm) return message($('#backupStatus'), 'Les deux codes ne correspondent pas.', true);
+        if (!$('#backupAcknowledgement').checked) return message($('#backupStatus'), 'Confirmez que vous avez conservé le code de récupération.', true);
+        const button = $('#createBackup'); button.disabled = true; message($('#backupStatus'), 'Chiffrement de la sauvegarde en cours…');
+        try { const content = await RebootArchive.create(code); const blob = new Blob([content], { type: 'application/json' }); const link = document.createElement('a'); link.href = URL.createObjectURL(blob); link.download = `REBOOT-sauvegarde-${new Date().toISOString().slice(0,10)}.json`; link.click(); setTimeout(() => URL.revokeObjectURL(link.href), 1000); await RebootArchive.noteBackup('local'); message($('#backupStatus'), 'Sauvegarde chiffrée téléchargée. Gardez le code séparément du fichier.'); } catch (error) { message($('#backupStatus'), error.message || 'Création impossible.', true); } finally { button.disabled = false; }
+      };
+      $('#checkArchive').onclick = async () => {
+        const file = $('#archiveFile').files[0], code = $('#restoreCode').value.trim(); openedPayload = null; $('#restoreArchive').classList.add('hidden'); $('#restoreAcknowledgementRow').classList.add('hidden');
+        if (!file) return message($('#restoreStatus'), 'Choisissez une sauvegarde.', true);
+        if (!code) return message($('#restoreStatus'), 'Saisissez le code de récupération.', true);
+        const button = $('#checkArchive'); button.disabled = true; message($('#restoreStatus'), 'Vérification et déchiffrement en cours…');
+        try { openedPayload = await RebootArchive.open(await file.text(), code); const daily = openedPayload.states.daily || {}; const calculator = openedPayload.states.calculator || {}; $('#archiveSummary').innerHTML = `<strong>Sauvegarde du ${new Date(openedPayload.exportedAt).toLocaleString('fr-FR')}.</strong><br>Suivi quotidien : ${(daily.expenses || []).length} dépense(s), ${(daily.reserves || []).length} réserve(s).<br>Calculateur : ${(calculator.groups || []).length} groupe(s) détecté(s).`; $('#archiveSummary').classList.remove('hidden'); $('#restoreAcknowledgementRow').classList.remove('hidden'); $('#restoreArchive').classList.remove('hidden'); message($('#restoreStatus'), 'Sauvegarde valide : vous pouvez maintenant choisir de la restaurer.'); } catch (error) { message($('#restoreStatus'), error.message || 'Vérification impossible.', true); } finally { button.disabled = false; }
+      };
+      $('#restoreArchive').onclick = async () => { if (!openedPayload) return; if (!$('#restoreAcknowledgement').checked) return message($('#restoreStatus'), 'Confirmez le remplacement des données avant de restaurer.', true); const button = $('#restoreArchive'); button.disabled = true; try { await RebootArchive.restore(openedPayload); message($('#restoreStatus'), 'Données restaurées. Vous pouvez revenir au suivi quotidien.'); } catch (error) { message($('#restoreStatus'), error.message || 'Restauration impossible.', true); } finally { button.disabled = false; } };
+    })();
+  </script>
+</body>
+</html>
