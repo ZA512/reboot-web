@@ -203,9 +203,11 @@ try {
   await page.goto(`${baseUrl}/calculateur.html`, { waitUntil: 'networkidle' });
   await page.locator('input[name="mode"][value="manual"]').check();
   await page.locator('#next').click();
-  if ((await page.locator('[data-template-check]').count()) !== 16) throw new Error('The monthly memory aid must be a checkbox list');
+  if ((await page.locator('[data-template-check]').count()) < 20) throw new Error('The monthly memory aid must be a themed checkbox list');
+  if (await page.locator('[data-manual]').count()) throw new Error('The manual form must appear after the memory-aid screen');
   await page.locator('[data-template-name="Salaire"]').check();
-  if ((await page.locator('[data-manual="0|name"]').inputValue()) !== 'Salaire') throw new Error('Checking Salary must create its form row');
+  await page.locator('#next').click();
+  if ((await page.locator('[data-manual="0|name"]').inputValue()) !== 'Salaire 1') throw new Error('Checking Salary must prepare its numbered form row');
   await page.locator('[data-duplicate-manual="0"]').click();
   if ((await page.locator('[data-manual="1|name"]').inputValue()) !== 'Salaire 2') throw new Error('Duplicating Salary must create Salary 2');
   await page.locator('[data-remove-manual="1"]').click();
@@ -225,7 +227,7 @@ try {
   await page.locator('[data-manual="3|type"]').selectOption('charge');
   await page.locator('[data-manual="3|amount"]').fill('100');
   await page.locator('[data-manual="3|endsOn"]').fill('2025-01-01');
-  for (let step = 0; step < 6; step += 1) await page.locator('#next').click();
+  for (let step = 0; step < 3; step += 1) await page.locator('#next').click();
   await assertContains(page.locator('#main'), 'Crédit terminé');
   page.once('dialog', dialog => dialog.accept());
   await page.locator('[data-remove-expired]').click();
@@ -280,6 +282,8 @@ try {
   });
   await page.locator('#next').click();
   await page.locator('#next').click();
+  await page.locator('[data-template-name="Salaire"]').check();
+  await page.locator('#next').click();
   if (await page.locator('input[data-group$="|confirmed"]').count()) throw new Error('A category choice must not require a separate confirmation checkbox');
   await page.locator('[data-open-group="g1"]').click();
   await page.locator('#transactionsDialog').waitFor({ state: 'visible' });
@@ -289,11 +293,13 @@ try {
   await page.locator('select[data-group="g1|category"]').selectOption('charge_monthly');
   await page.locator('#back').click();
   await page.locator('#back').click();
+  await page.locator('#back').click();
   await page.locator('#csvFile').setInputFiles({
     name: 'releve-mis-a-jour.csv',
     mimeType: 'text/csv',
     buffer: Buffer.from('Date;Libellé;Montant\n05/08/2026;Salaire 2026-08;3000\n05/09/2026;Salaire 2026-09;3000\n03/08/2026;Loyer contrat 412;-1200\n03/09/2026;Loyer contrat 477;-1200\n')
   });
+  await page.locator('#next').click();
   await page.locator('#next').click();
   await page.locator('#next').click();
   await assertContains(page.locator('select[data-group="g1|category"]').locator('xpath=ancestor::article[contains(@class,"group-card")]'), 'Montant à vérifier');
@@ -306,11 +312,30 @@ try {
   await page.locator('input[name="mode"][value="csv"]').check();
   await page.locator('#next').click();
   await page.locator('#csvFile').setInputFiles({
+    name: 'releve-treize-mois.csv',
+    mimeType: 'text/csv',
+    buffer: Buffer.from('Date;Libellé;Montant\n01/08/2025;Salaire 2025-08;1000\n01/09/2025;Salaire 2025-09;1000\n01/10/2025;Salaire 2025-10;1000\n01/11/2025;Salaire 2025-11;1000\n01/12/2025;Salaire 2025-12;1000\n01/01/2026;Salaire 2026-01;1000\n01/02/2026;Salaire 2026-02;1000\n01/03/2026;Salaire 2026-03;1000\n01/04/2026;Salaire 2026-04;1000\n01/05/2026;Salaire 2026-05;1000\n01/06/2026;Salaire 2026-06;1000\n01/07/2026;Salaire 2026-07;1000\n01/08/2026;Salaire 2026-08;1000\n')
+  });
+  await page.locator('#next').click();
+  await page.locator('#next').click();
+  await page.locator('[data-template-name="Salaire"]').check();
+  await page.locator('#next').click();
+  await assertContains(page.locator('#main'), 'Analyse limitée aux 12 derniers mois');
+  await assertContains(page.locator('#main'), 'Voir les 12 opérations');
+  console.log('PASS CSV longer than twelve months keeps the latest twelve without blocking');
+
+  await page.evaluate(() => RebootSecureStorage.clear('reboot-calculator-v1', 'reboot-site-v02'));
+  await page.reload({ waitUntil: 'networkidle' });
+  await page.locator('input[name="mode"][value="csv"]').check();
+  await page.locator('#next').click();
+  await page.locator('#csvFile').setInputFiles({
     name: 'releve-un-mois.csv',
     mimeType: 'text/csv',
     buffer: Buffer.from('Date;Libellé;Montant\n05/07/2026;PRET CONTRAT 12345;-764\n06/07/2026;PRET CONTRAT 67890;-253\n07/07/2026;PRET CONTRAT 54321;-147\n05/07/2026;SALAIRE DE ZA152;3000\n06/07/2026;REMBOURSEMENT EXCEPTIONNEL;250\n')
   });
   await page.locator('#next').click();
+  await page.locator('#next').click();
+  await page.locator('[data-template-name="Salaire"]').check();
   await page.locator('#next').click();
   const loanGroup = page.locator('article.group-card', { hasText: 'PRET CONTRAT' });
   if ((await loanGroup.locator('input[data-group$="|acceptedAmount"]').inputValue()) !== '1164.00') throw new Error('One-month grouped operations must propose the monthly total, not the per-line average');
@@ -321,12 +346,18 @@ try {
   await page.locator('#applySelectedTransactions').click();
   if ((await loanGroup.locator('input[data-group$="|acceptedAmount"]').inputValue()) !== '400.00') throw new Error('The checked transaction subset must update the retained monthly amount');
   await page.locator('#groupSearch').fill('ZA152');
-  const salarySearchResult = page.locator('article.group-card', { hasText: 'SALAIRE DE ZA152' });
-  if ((await salarySearchResult.count()) !== 1 || !(await salarySearchResult.isVisible())) throw new Error('A label search result must be displayed directly');
+  if (!(await page.locator('#groupSearch').evaluate(input => document.activeElement === input))) throw new Error('Typing in the label search must keep focus in the input');
+  const searchRows = page.locator('#groupSearchResults tbody tr');
+  if ((await searchRows.count()) !== 1 || !(await searchRows.first().isVisible())) throw new Error('A label search must display matching raw transaction rows');
+  if ((await searchRows.first().locator('input[data-search-transaction]:checked').count()) !== 1) throw new Error('Raw transaction rows must be selected by default');
+  await searchRows.first().locator('input[data-search-transaction]').uncheck();
+  await assertContains(page.locator('#searchAverage'), '0');
+  await searchRows.first().locator('input[data-search-transaction]').check();
+  if (!/Moyenne retenue : 3\s*000/.test((await page.locator('#searchAverage').innerText()).replace(/\u202f/g, ' '))) throw new Error('Rechecking a raw transaction must recalculate the monthly average');
   await page.locator('#groupSearch').fill('');
   await page.getByRole('tab', { name: 'Tous les libellés regroupés' }).click();
   if ((await page.getByRole('tab', { name: 'Tous les libellés regroupés' }).getAttribute('aria-selected')) !== 'true') throw new Error('The grouped-label tab must be available');
-  console.log('PASS guided checklist, numbered duplication, one-month totals, selectable lines and visible label search');
+  console.log('PASS guided checklist, numbered duplication, one-month totals, selectable lines and raw label search');
 
   await page.goto(`${baseUrl}/app.html`, { waitUntil: 'networkidle' });
   await page.locator('#addExpenseButton').click();
