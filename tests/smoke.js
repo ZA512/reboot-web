@@ -14,6 +14,7 @@ async function assertContains(locator, expected) {
 try {
   await page.goto(`${baseUrl}/app.html`, { waitUntil: 'networkidle' });
   if (!(await page.evaluate(() => Boolean(window.crypto?.subtle)))) throw new Error('Web Crypto is unavailable in the Docker browser context');
+  if ((await page.locator('.app-header').evaluate(element => getComputedStyle(element).display)) !== 'flex') throw new Error('The daily tracking stylesheet did not load');
   await page.locator('#welcomeDialog').waitFor({ state: 'visible' });
   console.log('PASS first visit offers a clear starting choice');
 
@@ -270,24 +271,27 @@ try {
   await page.locator('#csvFile').setInputFiles({
     name: 'releve-initial.csv',
     mimeType: 'text/csv',
-    buffer: Buffer.from('Date;Libellé;Montant\n05/06/2026;Salaire;3000\n05/07/2026;Salaire;3000\n03/06/2026;Loyer;-1000\n03/07/2026;Loyer;-1000\n')
+    buffer: Buffer.from('Date;Libellé;Montant\n05/06/2026;Salaire 2026-06;3000\n05/07/2026;Salaire 2026-07;3000\n03/06/2026;Loyer contrat 350;-1000\n03/07/2026;Loyer contrat 378;-1000\n')
   });
   await page.locator('#next').click();
   await page.locator('#next').click();
+  if (await page.locator('input[data-group$="|confirmed"]').count()) throw new Error('A category choice must not require a separate confirmation checkbox');
+  await page.locator('[data-open-group="g1"]').click();
+  await page.locator('#transactionsDialog').waitFor({ state: 'visible' });
+  await assertContains(page.locator('#transactionsBody'), 'Loyer contrat 350');
+  await page.locator('#transactionsDialog button[value="close"]').first().click();
   await page.locator('select[data-group="g0|category"]').selectOption('salary');
-  await page.locator('input[data-group="g0|confirmed"]').check();
   await page.locator('select[data-group="g1|category"]').selectOption('charge_monthly');
-  await page.locator('input[data-group="g1|confirmed"]').check();
   await page.locator('#back').click();
   await page.locator('#back').click();
   await page.locator('#csvFile').setInputFiles({
     name: 'releve-mis-a-jour.csv',
     mimeType: 'text/csv',
-    buffer: Buffer.from('Date;Libellé;Montant\n05/08/2026;Salaire;3000\n05/09/2026;Salaire;3000\n03/08/2026;Loyer;-1200\n03/09/2026;Loyer;-1200\n')
+    buffer: Buffer.from('Date;Libellé;Montant\n05/08/2026;Salaire 2026-08;3000\n05/09/2026;Salaire 2026-09;3000\n03/08/2026;Loyer contrat 412;-1200\n03/09/2026;Loyer contrat 477;-1200\n')
   });
   await page.locator('#next').click();
   await page.locator('#next').click();
-  await assertContains(page.locator('select[data-group="g1|category"]').locator('xpath=ancestor::div[contains(@class,"group-card")]'), 'Montant à vérifier');
+  await assertContains(page.locator('select[data-group="g1|category"]').locator('xpath=ancestor::article[contains(@class,"group-card")]'), 'Montant à vérifier');
   await page.locator('[data-apply-observed="g1"]').click();
   if ((await page.locator('input[data-group="g1|acceptedAmount"]').inputValue()) !== '1200.00') throw new Error('Updated CSV amount was not adopted');
   console.log('PASS CSV reimport keeps classifications and proposes changed amounts');

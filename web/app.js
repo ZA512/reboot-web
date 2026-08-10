@@ -581,7 +581,7 @@ $('#startDriveButton').addEventListener('click', () => beginOnboarding('drive'))
 
 async function init() {
   try {
-    if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js?v=21', { updateViaCache: 'none' }).catch(() => {});
+    if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js?v=26', { updateViaCache: 'none' }).catch(() => {});
     state = await loadState();
     state.baseWeeklyBudgetMinor ||= state.weeklyBudgetMinor || 0;
     state.configured = Boolean(state.baseWeeklyBudgetMinor > 0 && state.rebootDay !== null && state.rebootDay !== undefined && state.rebootDay !== '');
