@@ -203,8 +203,13 @@ try {
   await page.goto(`${baseUrl}/calculateur.html`, { waitUntil: 'networkidle' });
   await page.locator('input[name="mode"][value="manual"]').check();
   await page.locator('#next').click();
-  await page.locator('#addManual').click();
-  await page.locator('[data-manual="0|name"]').fill('Salaire');
+  if ((await page.locator('[data-template-check]').count()) !== 16) throw new Error('The monthly memory aid must be a checkbox list');
+  await page.locator('[data-template-name="Salaire"]').check();
+  if ((await page.locator('[data-manual="0|name"]').inputValue()) !== 'Salaire') throw new Error('Checking Salary must create its form row');
+  await page.locator('[data-duplicate-manual="0"]').click();
+  if ((await page.locator('[data-manual="1|name"]').inputValue()) !== 'Salaire 2') throw new Error('Duplicating Salary must create Salary 2');
+  await page.locator('[data-remove-manual="1"]').click();
+  await page.locator('[data-manual="0|name"]').fill('Salaire de ZA152');
   await page.locator('[data-manual="0|type"]').selectOption('income');
   await page.locator('[data-manual="0|amount"]').fill('3000');
   await page.locator('#addManual').click();
@@ -295,6 +300,33 @@ try {
   await page.locator('[data-apply-observed="g1"]').click();
   if ((await page.locator('input[data-group="g1|acceptedAmount"]').inputValue()) !== '1200.00') throw new Error('Updated CSV amount was not adopted');
   console.log('PASS CSV reimport keeps classifications and proposes changed amounts');
+
+  await page.evaluate(() => RebootSecureStorage.clear('reboot-calculator-v1', 'reboot-site-v02'));
+  await page.reload({ waitUntil: 'networkidle' });
+  await page.locator('input[name="mode"][value="csv"]').check();
+  await page.locator('#next').click();
+  await page.locator('#csvFile').setInputFiles({
+    name: 'releve-un-mois.csv',
+    mimeType: 'text/csv',
+    buffer: Buffer.from('Date;Libellé;Montant\n05/07/2026;PRET CONTRAT 12345;-764\n06/07/2026;PRET CONTRAT 67890;-253\n07/07/2026;PRET CONTRAT 54321;-147\n05/07/2026;SALAIRE DE ZA152;3000\n06/07/2026;REMBOURSEMENT EXCEPTIONNEL;250\n')
+  });
+  await page.locator('#next').click();
+  await page.locator('#next').click();
+  const loanGroup = page.locator('article.group-card', { hasText: 'PRET CONTRAT' });
+  if ((await loanGroup.locator('input[data-group$="|acceptedAmount"]').inputValue()) !== '1164.00') throw new Error('One-month grouped operations must propose the monthly total, not the per-line average');
+  await loanGroup.locator('[data-open-group]').click();
+  if ((await page.locator('#transactionsDialog input[type="checkbox"]:checked').count()) !== 3) throw new Error('All matched transaction lines must be selectable');
+  await page.locator('#transactionsDialog input[type="checkbox"]').first().uncheck();
+  await assertContains(page.locator('#selectedTransactionTotal'), '400');
+  await page.locator('#applySelectedTransactions').click();
+  if ((await loanGroup.locator('input[data-group$="|acceptedAmount"]').inputValue()) !== '400.00') throw new Error('The checked transaction subset must update the retained monthly amount');
+  await page.locator('#groupSearch').fill('ZA152');
+  const salarySearchResult = page.locator('article.group-card', { hasText: 'SALAIRE DE ZA152' });
+  if ((await salarySearchResult.count()) !== 1 || !(await salarySearchResult.isVisible())) throw new Error('A label search result must be displayed directly');
+  await page.locator('#groupSearch').fill('');
+  await page.getByRole('tab', { name: 'Tous les libellés regroupés' }).click();
+  if ((await page.getByRole('tab', { name: 'Tous les libellés regroupés' }).getAttribute('aria-selected')) !== 'true') throw new Error('The grouped-label tab must be available');
+  console.log('PASS guided checklist, numbered duplication, one-month totals, selectable lines and visible label search');
 
   await page.goto(`${baseUrl}/app.html`, { waitUntil: 'networkidle' });
   await page.locator('#addExpenseButton').click();
