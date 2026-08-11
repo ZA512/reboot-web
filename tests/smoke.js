@@ -203,9 +203,11 @@ try {
   await page.goto(`${baseUrl}/calculateur.html`, { waitUntil: 'networkidle' });
   await page.locator('input[name="mode"][value="manual"]').check();
   await page.locator('#next').click();
-  if ((await page.locator('[data-template-check]').count()) < 20) throw new Error('The monthly memory aid must be a themed checkbox list');
+  if ((await page.locator('[data-template-check]').count()) < 40 || (await page.locator('[data-annual-template-check]').count()) < 20) throw new Error('The memory aid must cover monthly and annual themed checklists');
+  if (!(await page.locator('.memory-note').count())) throw new Error('Checklist entries must include a useful reminder');
   if (await page.locator('[data-manual]').count()) throw new Error('The manual form must appear after the memory-aid screen');
   await page.locator('[data-template-name="Salaire"]').check();
+  await page.locator('[data-annual-template-check="Entretien annuel de chaudière"]').check();
   await page.locator('#next').click();
   if ((await page.locator('[data-manual="0|name"]').inputValue()) !== 'Salaire 1') throw new Error('Checking Salary must prepare its numbered form row');
   await page.locator('[data-duplicate-manual="0"]').click();
@@ -227,7 +229,9 @@ try {
   await page.locator('[data-manual="3|type"]').selectOption('charge');
   await page.locator('[data-manual="3|amount"]').fill('100');
   await page.locator('[data-manual="3|endsOn"]').fill('2025-01-01');
-  for (let step = 0; step < 3; step += 1) await page.locator('#next').click();
+  await page.locator('#next').click();
+  if ((await page.locator('[data-annual="0|name"]').inputValue()) !== 'Entretien annuel de chaudière') throw new Error('Annual checklist items must be prepared in the annual-expense step');
+  for (let step = 0; step < 2; step += 1) await page.locator('#next').click();
   await assertContains(page.locator('#main'), 'Crédit terminé');
   page.once('dialog', dialog => dialog.accept());
   await page.locator('[data-remove-expired]').click();
@@ -284,6 +288,8 @@ try {
   await page.locator('#next').click();
   await page.locator('[data-template-name="Salaire"]').check();
   await page.locator('#next').click();
+  await page.locator('#groupSearch').fill('');
+  if (!(await page.locator('#autoExplorer').evaluate(el => el.open))) await page.locator('#autoExplorer > summary').click();
   if (await page.locator('input[data-group$="|confirmed"]').count()) throw new Error('A category choice must not require a separate confirmation checkbox');
   await page.locator('[data-open-group="g1"]').click();
   await page.locator('#transactionsDialog').waitFor({ state: 'visible' });
@@ -302,6 +308,8 @@ try {
   await page.locator('#next').click();
   await page.locator('#next').click();
   await page.locator('#next').click();
+  await page.locator('#groupSearch').fill('');
+  if (!(await page.locator('#autoExplorer').evaluate(el => el.open))) await page.locator('#autoExplorer > summary').click();
   await assertContains(page.locator('select[data-group="g1|category"]').locator('xpath=ancestor::article[contains(@class,"group-card")]'), 'Montant à vérifier');
   await page.locator('[data-apply-observed="g1"]').click();
   if ((await page.locator('input[data-group="g1|acceptedAmount"]').inputValue()) !== '1200.00') throw new Error('Updated CSV amount was not adopted');
@@ -337,6 +345,8 @@ try {
   await page.locator('#next').click();
   await page.locator('[data-template-name="Salaire"]').check();
   await page.locator('#next').click();
+  await page.locator('#groupSearch').fill('');
+  await page.locator('#autoExplorer > summary').click();
   const loanGroup = page.locator('article.group-card', { hasText: 'PRET CONTRAT' });
   if ((await loanGroup.locator('input[data-group$="|acceptedAmount"]').inputValue()) !== '1164.00') throw new Error('One-month grouped operations must propose the monthly total, not the per-line average');
   await loanGroup.locator('[data-open-group]').click();
