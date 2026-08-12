@@ -210,8 +210,10 @@ try {
   await page.locator('[data-annual-template-check="Entretien annuel de chaudière"]').check();
   await page.locator('#next').click();
   if ((await page.locator('[data-manual="0|name"]').inputValue()) !== 'Salaire 1') throw new Error('Checking Salary must prepare its numbered form row');
+  await page.locator('.recurring-item-wrap').first().hover();
   await page.locator('[data-duplicate-manual="0"]').click();
-  if ((await page.locator('[data-manual="1|name"]').inputValue()) !== 'Salaire 2') throw new Error('Duplicating Salary must create Salary 2');
+  if ((await page.locator('[data-manual="1|name"]').inputValue()) !== 'Salaire 2') throw new Error('Duplicating Salary must insert Salary 2 immediately below the source');
+  await page.locator('.recurring-item-wrap').nth(1).hover();
   await page.locator('[data-remove-manual="1"]').click();
   await page.locator('[data-manual="0|name"]').fill('Salaire de ZA152');
   await page.locator('[data-manual="0|type"]').selectOption('income');
@@ -289,31 +291,22 @@ try {
   await page.locator('[data-template-name="Salaire"]').check();
   await page.locator('#next').click();
   await page.locator('#groupSearch').fill('');
-  if (!(await page.locator('#autoExplorer').evaluate(el => el.open))) await page.locator('#autoExplorer > summary').click();
-  if (await page.locator('input[data-group$="|confirmed"]').count()) throw new Error('A category choice must not require a separate confirmation checkbox');
-  await page.locator('[data-open-group="g1"]').click();
+  await page.getByRole('tab', { name: 'Récurrences détectées' }).click();
+  if ((await page.locator('[data-discovery-filter]').count()) !== 3) throw new Error('Recurrence detection must expose its three result views as visible toggles');
+  await page.locator('[data-discovery-filter="review"]').click();
+  if ((await page.locator('[data-discovery-filter="review"]').getAttribute('aria-checked')) !== 'true') throw new Error('The review recurrence toggle must be selectable');
+  await page.locator('[data-discovery-filter="suggested"]').click();
+  const loyerRow = page.locator('.discovery-table tbody tr', { hasText: 'Loyer contrat' });
+  await loyerRow.locator('[data-open-group]').click();
   await page.locator('#transactionsDialog').waitFor({ state: 'visible' });
   await assertContains(page.locator('#transactionsBody'), 'Loyer contrat 350');
   await page.locator('#transactionsDialog button[value="close"]').first().click();
-  await page.locator('select[data-group="g0|category"]').selectOption('salary');
-  await page.locator('select[data-group="g1|category"]').selectOption('charge_monthly');
-  await page.locator('#back').click();
-  await page.locator('#back').click();
-  await page.locator('#back').click();
-  await page.locator('#csvFile').setInputFiles({
-    name: 'releve-mis-a-jour.csv',
-    mimeType: 'text/csv',
-    buffer: Buffer.from('Date;Libellé;Montant\n05/08/2026;Salaire 2026-08;3000\n05/09/2026;Salaire 2026-09;3000\n03/08/2026;Loyer contrat 412;-1200\n03/09/2026;Loyer contrat 477;-1200\n')
-  });
-  await page.locator('#next').click();
-  await page.locator('#next').click();
-  await page.locator('#next').click();
-  await page.locator('#groupSearch').fill('');
-  if (!(await page.locator('#autoExplorer').evaluate(el => el.open))) await page.locator('#autoExplorer > summary').click();
-  await assertContains(page.locator('select[data-group="g1|category"]').locator('xpath=ancestor::article[contains(@class,"group-card")]'), 'Montant à vérifier');
-  await page.locator('[data-apply-observed="g1"]').click();
-  if ((await page.locator('input[data-group="g1|acceptedAmount"]').inputValue()) !== '1200.00') throw new Error('Updated CSV amount was not adopted');
-  console.log('PASS CSV reimport keeps classifications and proposes changed amounts');
+  const salaryRow = page.locator('.discovery-table tbody tr', { hasText: 'Salaire' });
+  await salaryRow.locator('[data-open-group]').click();
+  await page.locator('#applySelectedTransactions').click();
+  if ((await page.locator('input[data-manual="0|amount"]').inputValue()) !== '3000') throw new Error('The detected average must fill the selected recurring amount');
+  if ((await page.locator('[data-duplicate-manual="0"]').count()) !== 1 || (await page.locator('[data-remove-manual="0"]').count()) !== 1) throw new Error('Recurring rows must expose duplicate and remove controls');
+  console.log('PASS detected recurrences open raw transactions and can fill the selected recurring');
 
   await page.evaluate(() => RebootSecureStorage.clear('reboot-calculator-v1', 'reboot-site-v02'));
   await page.reload({ waitUntil: 'networkidle' });
@@ -329,7 +322,22 @@ try {
   await page.locator('[data-template-name="Salaire"]').check();
   await page.locator('#next').click();
   await assertContains(page.locator('#main'), 'Analyse limitée aux 12 derniers mois');
-  await assertContains(page.locator('#main'), 'Voir les 12 opérations');
+  await page.getByRole('tab', { name: 'Récurrences détectées' }).click();
+  await page.locator('.discovery-table tbody tr', { hasText: 'Salaire' }).locator('[data-open-group]').click();
+  await assertContains(page.locator('#transactionsBody'), 'Salaire 2026-08');
+  if ((await page.locator('#transactionsBody').innerText()).includes('Salaire 2025-08')) throw new Error('The thirteenth, older month must not be used for recurrence analysis');
+  await page.locator('#transactionsDialog button[value="close"]').first().click();
+  await page.getByRole('tab', { name: 'Recherche par libellé' }).click();
+  await page.locator('#groupSearch').fill('Salaire');
+  await page.locator('#searchMonths').selectOption('1');
+  if ((await page.locator('#groupSearchResults tbody tr').count()) !== 1) throw new Error('The search period selector must restrict results to the latest month');
+  await page.locator('#searchMin').fill('1001');
+  if ((await page.locator('#groupSearchResults tbody tr').count()) !== 0) throw new Error('A minimum amount alone must filter matching transactions');
+  await page.locator('#searchMin').fill('');
+  await page.locator('#searchMax').fill('999');
+  if ((await page.locator('#groupSearchResults tbody tr').count()) !== 0) throw new Error('A maximum amount alone must filter matching transactions');
+  await page.locator('#searchMax').fill('1000');
+  if ((await page.locator('#groupSearchResults tbody tr').count()) !== 1) throw new Error('Amount filters must restore transactions at their boundary');
   console.log('PASS CSV longer than twelve months keeps the latest twelve without blocking');
 
   await page.evaluate(() => RebootSecureStorage.clear('reboot-calculator-v1', 'reboot-site-v02'));
@@ -346,15 +354,15 @@ try {
   await page.locator('[data-template-name="Salaire"]').check();
   await page.locator('#next').click();
   await page.locator('#groupSearch').fill('');
-  await page.locator('#autoExplorer > summary').click();
-  const loanGroup = page.locator('article.group-card', { hasText: 'PRET CONTRAT' });
-  if ((await loanGroup.locator('input[data-group$="|acceptedAmount"]').inputValue()) !== '1164.00') throw new Error('One-month grouped operations must propose the monthly total, not the per-line average');
+  await page.getByRole('tab', { name: 'Récurrences détectées' }).click();
+  const loanGroup = page.locator('.discovery-table tbody tr', { hasText: 'PRET' });
   await loanGroup.locator('[data-open-group]').click();
   if ((await page.locator('#transactionsDialog input[type="checkbox"]:checked').count()) !== 3) throw new Error('All matched transaction lines must be selectable');
   await page.locator('#transactionsDialog input[type="checkbox"]').first().uncheck();
   await assertContains(page.locator('#selectedTransactionTotal'), '400');
   await page.locator('#applySelectedTransactions').click();
-  if ((await loanGroup.locator('input[data-group$="|acceptedAmount"]').inputValue()) !== '400.00') throw new Error('The checked transaction subset must update the retained monthly amount');
+  if ((await page.locator('input[data-manual="0|amount"]').inputValue()) !== '400') throw new Error('The checked transaction subset must update the selected recurring amount');
+  await page.getByRole('tab', { name: 'Recherche par libellé' }).click();
   await page.locator('#groupSearch').fill('ZA152');
   if (!(await page.locator('#groupSearch').evaluate(input => document.activeElement === input))) throw new Error('Typing in the label search must keep focus in the input');
   const searchRows = page.locator('#groupSearchResults tbody tr');
@@ -364,9 +372,11 @@ try {
   await assertContains(page.locator('#searchAverage'), '0');
   await searchRows.first().locator('input[data-search-transaction]').check();
   if (!/Moyenne retenue : 3\s*000/.test((await page.locator('#searchAverage').innerText()).replace(/\u202f/g, ' '))) throw new Error('Rechecking a raw transaction must recalculate the monthly average');
+  await page.locator('#applySearchAverage').click();
+  await assertContains(page.locator('#rebootToast'), 'affectés à');
   await page.locator('#groupSearch').fill('');
-  await page.getByRole('tab', { name: 'Tous les libellés regroupés' }).click();
-  if ((await page.getByRole('tab', { name: 'Tous les libellés regroupés' }).getAttribute('aria-selected')) !== 'true') throw new Error('The grouped-label tab must be available');
+  await page.getByRole('tab', { name: 'Récurrences détectées' }).click();
+  if ((await page.getByRole('tab', { name: 'Récurrences détectées' }).getAttribute('aria-selected')) !== 'true') throw new Error('The recurrence-detection mode must be available');
   console.log('PASS guided checklist, numbered duplication, one-month totals, selectable lines and raw label search');
 
   await page.goto(`${baseUrl}/app.html`, { waitUntil: 'networkidle' });
