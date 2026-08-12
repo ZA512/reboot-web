@@ -327,6 +327,17 @@ try {
   await assertContains(page.locator('#transactionsBody'), 'Salaire 2026-08');
   if ((await page.locator('#transactionsBody').innerText()).includes('Salaire 2025-08')) throw new Error('The thirteenth, older month must not be used for recurrence analysis');
   await page.locator('#transactionsDialog button[value="close"]').first().click();
+  await page.getByRole('tab', { name: 'Recherche par libellé' }).click();
+  await page.locator('#groupSearch').fill('Salaire');
+  await page.locator('#searchMonths').selectOption('1');
+  if ((await page.locator('#groupSearchResults tbody tr').count()) !== 1) throw new Error('The search period selector must restrict results to the latest month');
+  await page.locator('#searchMin').fill('1001');
+  if ((await page.locator('#groupSearchResults tbody tr').count()) !== 0) throw new Error('A minimum amount alone must filter matching transactions');
+  await page.locator('#searchMin').fill('');
+  await page.locator('#searchMax').fill('999');
+  if ((await page.locator('#groupSearchResults tbody tr').count()) !== 0) throw new Error('A maximum amount alone must filter matching transactions');
+  await page.locator('#searchMax').fill('1000');
+  if ((await page.locator('#groupSearchResults tbody tr').count()) !== 1) throw new Error('Amount filters must restore transactions at their boundary');
   console.log('PASS CSV longer than twelve months keeps the latest twelve without blocking');
 
   await page.evaluate(() => RebootSecureStorage.clear('reboot-calculator-v1', 'reboot-site-v02'));
