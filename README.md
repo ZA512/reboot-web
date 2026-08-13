@@ -129,14 +129,20 @@ Exécutez cette commande deux fois : une valeur pour `REBOOT_TOKEN_ENCRYPTION_KE
 Dans le projet Google Cloud correspondant :
 
 1. Activez **Google Drive API**.
-2. Configurez l’écran de consentement OAuth si ce n’est pas déjà fait.
-3. Dans le client OAuth de type **Application Web**, ajoutez exactement :
+2. Dans **Google Auth Platform → Accès aux données**, cliquez sur **Ajouter ou supprimer des champs d’application**, puis ajoutez exactement le scope suivant :
+
+   ```text
+   https://www.googleapis.com/auth/drive.appdata
+   ```
+
+3. Configurez l’écran de consentement OAuth si ce n’est pas déjà fait (et ajoutez les utilisateurs de test si l’application est en mode test).
+4. Dans le client OAuth de type **Application Web**, ajoutez exactement :
 
    ```text
    https://budget.exemple.fr/api/oauth/google/callback
    ```
 
-4. La valeur déclarée dans Google Cloud doit être strictement identique à `GOOGLE_REDIRECT_URI` dans `.env`.
+5. La valeur déclarée dans Google Cloud doit être strictement identique à `GOOGLE_REDIRECT_URI` dans `.env`.
 
 #### Démarrer ou mettre à jour les conteneurs
 

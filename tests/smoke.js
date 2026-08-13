@@ -18,6 +18,16 @@ try {
   await page.locator('#welcomeDialog').waitFor({ state: 'visible' });
   console.log('PASS first visit offers a clear starting choice');
 
+  await page.evaluate(() => localStorage.setItem('reboot-drive-config-v2', JSON.stringify({ brokerConnected: true, syncPendingSetup: true })));
+  await page.reload({ waitUntil: 'networkidle' });
+  await assertContains(page.locator('#welcomeTitle'), 'Google Drive est prêt');
+  if (await page.locator('#startLocalButton').isVisible()) throw new Error('A connected empty Drive must not ask the user to choose local storage again');
+  await assertContains(page.locator('#restoreDriveOption'), 'Importer une sauvegarde locale');
+  await page.evaluate(async () => { localStorage.removeItem('reboot-drive-config-v2'); sessionStorage.removeItem('reboot-google-access-token-v1'); await RebootSecureStorage.clear('reboot-local-v1', 'reboot-local-v1'); await RebootSecureStorage.clear('reboot-calculator-v1', 'reboot-site-v02'); });
+  await page.goto(`${baseUrl}/app.html`, { waitUntil: 'networkidle' });
+  await page.locator('#welcomeDialog').waitFor({ state: 'visible' });
+  console.log('PASS an empty Drive is presented as ready for setup, not as a synchronized budget');
+
   await page.locator('#startLocalButton').click();
   await page.waitForURL('**/calculateur.html?onboarding=1');
   const localStartSaved = await page.evaluate(async () => (await RebootSecureStorage.read('reboot-local-v1', 'reboot-local-v1'))?.onboarding?.storage === 'local');
@@ -187,16 +197,17 @@ try {
   console.log('PASS encrypted archive restores daily data only after confirmation');
 
   await page.route('**/api/oauth/google/status', route => route.fulfill({ json: { connected: false, provider: null, scopes: [], csrf_token: null } }));
-  await page.goto(`${baseUrl}/drive.html`, { waitUntil: 'networkidle' });
+  await page.goto(`${baseUrl}/drive.html`, { waitUntil: 'domcontentloaded' });
   await assertContains(page.locator('#driveTitle'), 'Vos données sont sur cet appareil');
   if (!(await page.locator('#connectDrive').isVisible())) throw new Error('A disconnected broker must offer a single Google Drive connection action');
   await page.unroute('**/api/oauth/google/status');
   let tokenRequests = 0, appDataRequests = 0, appDataUpload = '';
   await page.route('**/api/oauth/google/status', route => route.fulfill({ json: { connected: true, provider: 'google', scopes: ['https://www.googleapis.com/auth/drive.appdata'], csrf_token: 'browser-csrf', dataset_id: '11111111-1111-4111-8111-111111111111', tombstone_retention_days: 90 } }));
   await page.route('**/api/oauth/google/token', route => { tokenRequests += 1; return route.fulfill({ json: { access_token: `short-token-${tokenRequests}`, expires_in: 3600, expires_at: Date.now() + 3600000 } }); });
+  await page.route('**/api/sync/lease**', route => route.request().method() === 'DELETE' ? route.fulfill({ status: 204 }) : route.fulfill({ json: { status: 'acquired', leaseId: 'browser-test-lease', expiresAt: new Date(Date.now() + 15000).toISOString() } }));
   await page.route('https://www.googleapis.com/drive/v3/files**', route => { appDataRequests += 1; return route.fulfill({ headers: { 'Access-Control-Allow-Origin': '*' }, json: { files: [] } }); });
   await page.route('https://www.googleapis.com/upload/drive/v3/files**', async route => { appDataUpload = route.request().postData() || ''; return route.fulfill({ headers: { 'Access-Control-Allow-Origin': '*' }, json: { id: 'appdata-file-1', name: 'reboot-data.json', version: '1' } }); });
-  await page.goto(`${baseUrl}/drive.html`, { waitUntil: 'networkidle' });
+  await page.goto(`${baseUrl}/drive.html`, { waitUntil: 'domcontentloaded' });
   await page.waitForFunction(() => Boolean(JSON.parse(localStorage.getItem('reboot-drive-config-v2') || '{}').lastSyncAt));
   await assertContains(page.locator('#driveTitle'), 'Votre budget est synchronisé');
   if (tokenRequests !== 1 || appDataRequests < 1 || !appDataUpload.includes('appDataFolder') || !appDataUpload.includes('datasetId')) throw new Error('Broker token, dataset metadata and Drive appDataFolder must be used without proxying the budget through REBOOT');
@@ -215,6 +226,11 @@ try {
     { daily: { updatedAt: '2026-08-02T10:00:00.000Z', expenses: [{ id: 'shared', amountMinor: 200, updatedAt: '2026-08-02T10:00:00.000Z' }, { id: 'remote', amountMinor: 300, updatedAt: '2026-08-02T10:00:00.000Z' }], refunds: [{ id: 'refund', amountMinor: 50, createdAt: '2026-08-02T10:00:00.000Z' }] }, calculator: { updatedAt: '2026-08-02T10:00:00.000Z', manualMonthly: [{ name: 'Distant' }] } }
   ));
   if (mergedStates.daily.expenses.length !== 2 || mergedStates.daily.expenses.find(expense => expense.id === 'shared')?.amountMinor !== 200 || mergedStates.daily.reserves.length !== 1 || mergedStates.daily.refunds.length !== 1 || mergedStates.calculator.manualMonthly[0].name !== 'Distant') throw new Error('Multi-device state merge must preserve independent entries and newest edits');
+  const protectedStates = await page.evaluate(() => RebootDrive.mergeStates(
+    { daily: { updatedAt: '2026-08-01T10:00:00.000Z', configured: true, householdName: 'Notre foyer', baseWeeklyBudgetMinor: 50000, weeklyBudgetMinor: 50000, rebootDay: 1 }, calculator: { updatedAt: '2026-08-01T10:00:00.000Z', manualMonthly: [{ name: 'Internet', amount: 30 }] } },
+    { daily: { updatedAt: '2026-08-13T10:00:00.000Z', configured: false, householdName: 'Notre foyer', reserves: [{ kind: 'health', name: 'Santé', initialBalanceMinor: 0 }] }, calculator: { updatedAt: '2026-08-13T10:00:00.000Z', manualMonthly: [] } }
+  ));
+  if (!protectedStates.daily.configured || protectedStates.daily.baseWeeklyBudgetMinor !== 50000 || protectedStates.calculator.manualMonthly[0]?.name !== 'Internet') throw new Error('A newer empty device must not erase a configured budget');
   const tombstoneStates = await page.evaluate(() => RebootDrive.mergeStates(
     { daily: { expenses: [{ id: 'deleted-expense', amountMinor: 100, updatedAt: '2026-08-01T10:00:00.000Z', modifiedAt: '2026-08-01T10:00:00.000Z', modifiedBy: 'device-a' }] } },
     { daily: { expenses: [{ id: 'deleted-expense', deletedAt: '2026-08-02T10:00:00.000Z', modifiedAt: '2026-08-02T10:00:00.000Z', modifiedBy: 'device-b' }] } }
@@ -222,17 +238,18 @@ try {
   if (!tombstoneStates.daily.expenses.find(expense => expense.id === 'deleted-expense')?.deletedAt) throw new Error('A newer tombstone must prevent an old device from resurrecting a deleted expense');
   await page.unroute('**/api/oauth/google/status');
   await page.unroute('**/api/oauth/google/token');
+  await page.unroute('**/api/sync/lease**');
   await page.unroute('https://www.googleapis.com/drive/v3/files**');
   await page.unroute('https://www.googleapis.com/upload/drive/v3/files**');
   await page.route('**/api/oauth/google/status', route => route.fulfill({ status: 503, json: { error: 'broker_unavailable', category: 'temporary' } }));
-  await page.goto(`${baseUrl}/drive.html`, { waitUntil: 'networkidle' });
+  await page.goto(`${baseUrl}/drive.html`, { waitUntil: 'domcontentloaded' });
   await page.locator('#errorState').waitFor({ state: 'visible' });
   if (!(await page.locator('#retryDrive').isVisible()) || await page.locator('#reconnectDrive').isVisible()) throw new Error('A temporary broker outage must offer retry without claiming authorization was lost');
   await page.unroute('**/api/oauth/google/status');
   await page.route('**/api/oauth/google/status', route => route.fulfill({ json: { connected: true, provider: 'google', scopes: ['https://www.googleapis.com/auth/drive.appdata'], csrf_token: 'browser-csrf', dataset_id: '11111111-1111-4111-8111-111111111111' } }));
   await page.route('**/api/oauth/google/token', route => route.fulfill({ status: 401, json: { error: 'invalid_grant', category: 'reauth_required', message: 'Google Drive doit être reconnecté.' } }));
   await page.evaluate(() => sessionStorage.removeItem('reboot-google-access-token-v1'));
-  await page.goto(`${baseUrl}/drive.html`, { waitUntil: 'networkidle' });
+  await page.goto(`${baseUrl}/drive.html`, { waitUntil: 'domcontentloaded' });
   await page.locator('#reconnectDrive').waitFor({ state: 'visible' });
   await page.unroute('**/api/oauth/google/status');
   await page.unroute('**/api/oauth/google/token');

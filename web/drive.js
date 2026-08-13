@@ -34,12 +34,25 @@
     return [...values.values()];
   }
   function mergeBackupStatus(local = {}, remote = {}) { return Object.fromEntries([...new Set([...Object.keys(local), ...Object.keys(remote)])].map(key => [key, timestamp(local[key]) >= timestamp(remote[key]) ? local[key] : remote[key]])); }
+  function hasMeaningfulReserve(items = []) { return items.some(item => item && !item.deletedAt && (item.kind !== 'health' || item.real || Number(item.initialBalanceMinor) || Number(item.monthlyContributionMinor) || Number(item.annualTargetMinor))); }
+  function hasMeaningfulDailyState(daily = {}) {
+    if (!daily || typeof daily !== 'object') return false;
+    if (daily.configured || daily.onboarding?.storage || daily.budgetSource || daily.calculatorBudget || (daily.householdName && daily.householdName !== 'Notre foyer')) return true;
+    if (['expenses', 'refunds', 'reserveTransfers', 'importedBankOperations'].some(key => Array.isArray(daily[key]) && daily[key].some(item => item && !item.deletedAt))) return true;
+    return hasMeaningfulReserve(daily.reserves);
+  }
+  function hasMeaningfulCalculatorState(calculator = {}) {
+    if (!calculator || typeof calculator !== 'object') return false;
+    return ['manualMonthly', 'annual', 'tx', 'groups', 'selectedTemplates'].some(key => Array.isArray(calculator[key]) && calculator[key].length > 0);
+  }
+  function hasMeaningfulStates(states = {}) { return hasMeaningfulDailyState(states.daily) || hasMeaningfulCalculatorState(states.calculator); }
   function purgeTombstones(items = [], retentionDays = 90) {
     const threshold = Date.now() - retentionDays * 86400000;
     return items.filter(item => !item.deletedAt || itemTimestamp(item) >= threshold);
   }
   function mergeDaily(local = {}, remote = {}, retentionDays = 90) {
-    const base = timestamp(remote.updatedAt) > timestamp(local.updatedAt) ? remote : local;
+    const localMeaningful = hasMeaningfulDailyState(local), remoteMeaningful = hasMeaningfulDailyState(remote);
+    const base = localMeaningful !== remoteMeaningful ? (localMeaningful ? local : remote) : (timestamp(remote.updatedAt) > timestamp(local.updatedAt) ? remote : local);
     const mapping = timestamp(remote.bankImportMapping?.updatedAt) > timestamp(local.bankImportMapping?.updatedAt) ? remote.bankImportMapping : local.bankImportMapping;
     return {
       ...base,
@@ -56,7 +69,9 @@
   }
   function mergeStates(local = {}, remote = {}, options = {}) {
     const localCalculator = local.calculator || {}, remoteCalculator = remote.calculator || {};
-    return { daily: mergeDaily(local.daily || {}, remote.daily || {}, options.tombstoneRetentionDays || 90), calculator: compareItems(remoteCalculator, localCalculator) > 0 ? remoteCalculator : localCalculator };
+    const localCalculatorMeaningful = hasMeaningfulCalculatorState(localCalculator), remoteCalculatorMeaningful = hasMeaningfulCalculatorState(remoteCalculator);
+    const calculator = localCalculatorMeaningful !== remoteCalculatorMeaningful ? (localCalculatorMeaningful ? localCalculator : remoteCalculator) : (compareItems(remoteCalculator, localCalculator) > 0 ? remoteCalculator : localCalculator);
+    return { daily: mergeDaily(local.daily || {}, remote.daily || {}, options.tombstoneRetentionDays || 90), calculator };
   }
   function canonical(value) {
     if (Array.isArray(value)) return value.map(canonical);
@@ -211,13 +226,18 @@
     if (!datasetId) throw new RebootDriveError('Le jeu de données synchronisé est indisponible.', 'temporary', 'dataset_missing');
     if (remoteSync.datasetId && remoteSync.datasetId !== datasetId) throw new RebootDriveError('Ce fichier Google Drive appartient à un autre jeu de données REBOOT.', 'configuration_error', 'dataset_mismatch');
     const remoteStates = remote?.payload?.states || null;
+    if (!hasMeaningfulStates(localStates) && !hasMeaningfulStates(remoteStates || {})) {
+      const config = storedConfig();
+      saveConfig({ brokerConnected: true, datasetId, driveFileId: remote?.file?.id || config.driveFileId || '', driveVersion: String(remote?.file?.version || config.driveVersion || ''), syncPendingSetup: true, lastSyncErrorCode: '', lastSyncErrorMessage: '', dirty: false });
+      return { file: remote?.file || null, merged: false, uploaded: false, pendingSetup: true, revision: Number(remoteSync.revision) || 0 };
+    }
     const mergedStates = remoteStates ? mergeStates(localStates, remoteStates, { tombstoneRetentionDays: Number(status.tombstone_retention_days) || 90 }) : localStates;
     const localChanged = !sameStates(mergedStates, rawLocalStates), remoteChanged = !remoteStates || !sameStates(mergedStates, remoteStates);
     const revision = Math.max(0, Number(remoteSync.revision) || 0) + (remoteChanged ? 1 : 0);
     if (localChanged) await saveStates(mergedStates);
     const file = remoteChanged ? await storageProvider.save(mergedStates, remote?.file, { datasetId, revision, schemaVersion: 3 }) : remote.file;
     const latestConfig = storedConfig(), unchangedSinceSnapshot = Number(latestConfig.localRevision || 0) === syncRevision;
-    saveConfig({ brokerConnected: true, datasetId, driveFileId: file?.id || remote?.file?.id || '', driveVersion: String(file?.version || remote?.file?.version || ''), driveRevision: revision, lastSyncAt: new Date().toISOString(), dirty: !unchangedSinceSnapshot, lastSyncedLocalRevision: unchangedSinceSnapshot ? syncRevision : Number(latestConfig.lastSyncedLocalRevision || 0) });
+    saveConfig({ brokerConnected: true, datasetId, driveFileId: file?.id || remote?.file?.id || '', driveVersion: String(file?.version || remote?.file?.version || ''), driveRevision: revision, lastSyncAt: new Date().toISOString(), syncPendingSetup: false, lastSyncErrorCode: '', lastSyncErrorMessage: '', dirty: !unchangedSinceSnapshot, lastSyncedLocalRevision: unchangedSinceSnapshot ? syncRevision : Number(latestConfig.lastSyncedLocalRevision || 0) });
     if (localChanged) window.dispatchEvent(new CustomEvent('reboot:drive-merged'));
     return { file, merged: localChanged, uploaded: remoteChanged, revision };
   }
@@ -244,6 +264,7 @@
       const result = await syncWithLease(status, syncRevision); setStatus('connected_idle'); return result;
     } catch (error) {
       const category = error?.category || 'temporary';
+      saveConfig({ lastSyncErrorCode: error?.code || 'sync_error', lastSyncErrorMessage: error?.message || 'Synchronisation impossible.' });
       setStatus(category === 'reauth_required' ? 'reauth_required' : error?.code === 'sync_busy' ? 'sync_delayed' : 'sync_error', error.message || 'Synchronisation impossible.');
       return null;
     } finally {
@@ -277,6 +298,6 @@
   }
   async function disconnect() { await tokenProvider.disconnect(); setStatus('disconnected'); }
 
-  window.RebootDrive = { config, synchronize: syncNow, upload: syncNow, pull: syncNow, mergeStates, syncNow, startAutoSync, disconnect, connect: returnTo => tokenProvider.connect(returnTo), deviceId, tokenProvider, storageProvider, RebootDriveError };
-  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', () => startAutoSync(), { once: true }); else startAutoSync();
+  const initialSync = startAutoSync();
+  window.RebootDrive = { config, synchronize: syncNow, upload: syncNow, pull: syncNow, mergeStates, syncNow, startAutoSync, initialSync: () => initialSync, disconnect, connect: returnTo => tokenProvider.connect(returnTo), deviceId, tokenProvider, storageProvider, RebootDriveError };
 })();

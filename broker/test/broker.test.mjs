@@ -22,14 +22,14 @@ function testConfig(overrides = {}) {
   };
 }
 
-async function setup({ authorizationFailure = null, refreshFailure = null, tokenNetworkFailure = false, config = testConfig() } = {}) {
+async function setup({ authorizationFailure = null, refreshFailure = null, tokenNetworkFailure = false, grantedScopes = 'openid https://www.googleapis.com/auth/drive.appdata', config = testConfig() } = {}) {
   const calls = [];
   const fetchImpl = async (url, options = {}) => {
     calls.push({ url: String(url), method: options.method || 'GET', body: String(options.body || '') });
     if (String(url).startsWith(config.googleTokenInfoUrl)) return Response.json({ sub: 'google-subject-1', aud: config.googleClientId, iss: 'https://accounts.google.com' });
     if (url === config.googleTokenUrl) {
       const body = new URLSearchParams(options.body), grant = body.get('grant_type');
-      if (grant === 'authorization_code') return authorizationFailure ? Response.json({ error: authorizationFailure }, { status: 400 }) : Response.json({ access_token: 'short-access-1', refresh_token: 'critical-refresh-token', id_token: 'signed-google-id-token', expires_in: 3600, scope: `openid https://www.googleapis.com/auth/drive.appdata` });
+      if (grant === 'authorization_code') return authorizationFailure ? Response.json({ error: authorizationFailure }, { status: 400 }) : Response.json({ access_token: 'short-access-1', refresh_token: 'critical-refresh-token', id_token: 'signed-google-id-token', expires_in: 3600, scope: grantedScopes });
       if (tokenNetworkFailure) throw new Error('network down');
       if (refreshFailure) return Response.json({ error: refreshFailure }, { status: 400 });
       return Response.json({ access_token: 'short-access-2', expires_in: 3600 });
@@ -132,6 +132,15 @@ test('an expired authorization code fails without creating an association', asyn
   const callback = await fetch(`${context.base}/api/oauth/google/callback?code=expired&state=${authorization.searchParams.get('state')}`, { headers: { Cookie: cookie }, redirect: 'manual' });
   assert.equal(callback.status, 302);
   assert.equal(callback.headers.get('location'), '/drive.html?drive=oauth_error');
+  assert.equal(context.database.db.prepare('SELECT COUNT(*) AS count FROM google_connections').get().count, 0);
+});
+
+test('an authorization without the private Drive scope is rejected before it is stored', async () => {
+  const context = await setup({ grantedScopes: 'openid' });
+  const start = await fetch(`${context.base}/api/oauth/google/start`, { redirect: 'manual' }), authorization = new URL(start.headers.get('location')), cookie = start.headers.get('set-cookie').split(';')[0];
+  const callback = await fetch(`${context.base}/api/oauth/google/callback?code=missing-scope&state=${authorization.searchParams.get('state')}`, { headers: { Cookie: cookie }, redirect: 'manual' });
+  assert.equal(callback.status, 302);
+  assert.equal(callback.headers.get('location'), '/drive.html?drive=oauth_scope_missing');
   assert.equal(context.database.db.prepare('SELECT COUNT(*) AS count FROM google_connections').get().count, 0);
 });
 

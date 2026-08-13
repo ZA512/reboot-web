@@ -89,12 +89,12 @@ function renderFreshness() {
   $('#syncNow')?.classList.toggle('hidden', !drive?.configured && !['syncing', 'connected_idle', 'sync_error', 'sync_delayed', 'reauth_required'].includes(syncState));
   if (drive?.configured || ['syncing', 'connected_idle', 'sync_error', 'sync_delayed', 'reauth_required'].includes(syncState)) {
     const at = drive.lastSyncAt ? new Intl.DateTimeFormat('fr-FR', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }).format(new Date(drive.lastSyncAt)) : '';
-    const label = syncState === 'syncing' ? 'Synchronisation…' : syncState === 'reauth_required' ? 'Drive à reconnecter' : syncState === 'sync_delayed' ? 'Sync retardée' : syncState === 'sync_error' ? 'Sync en attente' : `Drive synchronisé${at ? ` · ${at}` : ''}`;
+    const label = syncState === 'syncing' ? 'Synchronisation…' : syncState === 'reauth_required' ? 'Drive à reconnecter' : syncState === 'sync_delayed' ? 'Sync retardée' : syncState === 'sync_error' ? 'Sync en attente' : drive.syncPendingSetup ? 'Drive prêt à configurer' : `Drive synchronisé${at ? ` · ${at}` : ''}`;
     const color = syncState === 'reauth_required' ? '#d58a22' : ['sync_error', 'sync_delayed'].includes(syncState) ? '#7b8a86' : '#0e6f67';
     target.innerHTML = `<span class="status-dot" style="background:${color}"></span><span class="sync-label">${label}</span>`;
     return;
   }
-  const backups = Object.entries(state.backupStatus || {}).filter(([, at]) => at).sort(([, a], [, b]) => new Date(b) - new Date(a));
+  const backups = Object.entries(state?.backupStatus || {}).filter(([, at]) => at).sort(([, a], [, b]) => new Date(b) - new Date(a));
   if (!backups.length) { target.innerHTML = '<span class="status-dot"></span><span class="sync-label">Local uniquement</span>'; return; }
   const [kind, at] = backups[0]; const date = new Intl.DateTimeFormat('fr-FR', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }).format(new Date(at));
   target.innerHTML = `<span class="status-dot"></span><span class="sync-label">${kind === 'drive' ? 'Drive' : 'Sauvegardé'} · ${date}</span>`;
@@ -209,6 +209,17 @@ function openSettings() { updateSettingsFields(); $('#settingsDialog').showModal
 async function saveSettings(event) { if (event.submitter?.value === 'cancel') return; event.preventDefault(); state.householdName = $('#householdName').value.trim() || 'Notre foyer'; if (state.budgetSource !== 'calculator') { const budget = eurosToMinor($('#weeklyBudget').value); if (budget) state.baseWeeklyBudgetMinor = state.weeklyBudgetMinor = budget; } if ($('#rebootDay').value !== '') state.rebootDay = Number($('#rebootDay').value); state.configured = Boolean(state.baseWeeklyBudgetMinor > 0 && state.rebootDay !== null && state.rebootDay !== undefined); await saveState(); $('#settingsDialog').close(); render(); }
 async function refreshCalculatorStatus() { calculatorRefreshReason = ''; try { calculatorState = await RebootSecureStorage.read(CALCULATOR_DATABASE, CALCULATOR_STORE); if (!calculatorState || state.budgetSource !== 'calculator' || !state.calculatorBudget) return; if (calculatorState.updatedAt && calculatorState.updatedAt > (state.calculatorBudget.sourceUpdatedAt || '')) calculatorRefreshReason = 'changed'; const today = dateKey(new Date()); if ((calculatorState.manualMonthly || []).some(item => item.endsOn && item.endsOn < today && item.endsOn >= String(state.calculatorBudget.sourceUpdatedAt || '').slice(0, 10))) calculatorRefreshReason = 'expired'; } catch { calculatorState = null; } }
 function showSyncCompleteNotice() { let notice; try { notice = JSON.parse(sessionStorage.getItem('reboot-sync-complete') || 'null'); sessionStorage.removeItem('reboot-sync-complete'); } catch { return false; } if (!notice) return false; $('#syncCompleteMessage').textContent = notice.restored ? 'Votre budget Google a été récupéré sur cet appareil.' : notice.merged ? 'Les changements trouvés sur vos autres appareils ont été réunis.' : 'Votre copie Google est à jour.'; $('#syncCompleteDialog').showModal(); return true; }
+function prepareWelcomeDialog() {
+  if (!window.RebootDrive?.config?.().syncPendingSetup) return;
+  $('#welcomeTitle').textContent = 'Google Drive est prêt';
+  $('#welcomeLead').textContent = 'La connexion fonctionne, mais aucun budget n’a été trouvé. Créez votre budget ou importez une sauvegarde de votre ancienne adresse.';
+  $('#startLocalButton').classList.add('hidden');
+  $('#startDriveButton').querySelector('strong').textContent = 'Créer mon budget';
+  $('#startDriveButton').querySelector('small').textContent = 'Il sera ensuite synchronisé automatiquement.';
+  $('#restoreDriveOption').href = 'restaurer.html';
+  $('#restoreDriveOption').querySelector('strong').textContent = 'Importer une sauvegarde locale';
+  $('#restoreDriveOption').querySelector('small').textContent = 'Retrouver les chiffres d’une autre adresse ou d’un autre appareil.';
+}
 async function beginOnboarding(storage) { state.onboarding = { storage, startedAt: new Date().toISOString() }; await saveState(); $('#welcomeDialog').close(); location.assign('calculateur.html?onboarding=1'); }
 
 $('#addExpenseButton').onclick = () => openExpenseDialog(); $('#emptyAddButton').onclick = () => openExpenseDialog(); $('#movementAddButton').onclick = () => openExpenseDialog(); $('#addHealthExpenseButton').onclick = () => openExpenseDialog(null, true); $('#addRefundButton').onclick = () => openRefundDialog(); $('#addHealthRefundButton').onclick = () => openRefundDialog(null, true); $('#settingsButton').onclick = openSettings; $('#addReserveButton').onclick = () => openReserveDialog(); $('#addChargeButton').onclick = () => openChargeDialog(); $('#rebalanceHealthButton').onclick = openRebalanceDialog; $('#applyRecommendedBudget').onclick = applyRecommendedBudget;
@@ -218,13 +229,13 @@ $$('input[name="funding"]').forEach(input => input.onchange = toggleReserveChoic
 $('#movementSearch').oninput = renderMovements; $$('[data-movement-filter]').forEach(button => button.onclick = () => { movementFilter = button.dataset.movementFilter; $$('[data-movement-filter]').forEach(item => item.setAttribute('aria-pressed', item === button ? 'true' : 'false')); renderMovements(); });
 $$('[data-reserve-suggestion]').forEach(button => button.onclick = () => openReserveDialog(null, button.dataset.reserveSuggestion));
 $('#startLocalButton').onclick = () => beginOnboarding('local'); $('#startDriveButton').onclick = () => beginOnboarding('drive'); window.addEventListener('hashchange', showView);
-window.addEventListener('reboot:drive-status', (event) => { driveStatus = event.detail; renderFreshness(); });
-window.addEventListener('reboot:drive-merged', async () => { state = await loadState(); state.baseWeeklyBudgetMinor ||= state.weeklyBudgetMinor || 0; ensureHealthReserve(); await refreshCalculatorStatus(); render(); });
+window.addEventListener('reboot:drive-status', (event) => { driveStatus = event.detail; if (state) renderFreshness(); });
+window.addEventListener('reboot:drive-merged', async () => { state = await loadState(); state.baseWeeklyBudgetMinor ||= state.weeklyBudgetMinor || 0; ensureHealthReserve(); await refreshCalculatorStatus(); render(); if (state.configured || state.onboarding?.storage) $('#welcomeDialog').close(); });
 $('#syncNow').onclick = () => driveStatus?.state === 'reauth_required' ? window.RebootDrive?.connect('/app.html') : window.RebootDrive?.syncNow();
 
 (async function init() {
   try {
-    if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js?v=42', { updateViaCache: 'none' }).catch(() => {});
-    state = await loadState(); state.baseWeeklyBudgetMinor ||= state.weeklyBudgetMinor || 0; state.configured = Boolean(state.baseWeeklyBudgetMinor > 0 && state.rebootDay !== null && state.rebootDay !== undefined && state.rebootDay !== ''); const migrated = ensureHealthReserve(); if (migrated) await saveState(); await refreshCalculatorStatus(); render(); showView(); const syncShown = showSyncCompleteNotice(); if (!state.configured && !state.onboarding?.storage && !syncShown) $('#welcomeDialog').showModal();
+    if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js?v=43', { updateViaCache: 'none' }).catch(() => {});
+    await window.RebootDrive?.initialSync?.(); state = await loadState(); state.baseWeeklyBudgetMinor ||= state.weeklyBudgetMinor || 0; state.configured = Boolean(state.baseWeeklyBudgetMinor > 0 && state.rebootDay !== null && state.rebootDay !== undefined && state.rebootDay !== ''); const migrated = ensureHealthReserve(); if (migrated) await saveState(); await refreshCalculatorStatus(); render(); showView(); const syncShown = showSyncCompleteNotice(); prepareWelcomeDialog(); if (!state.configured && !state.onboarding?.storage && !syncShown) $('#welcomeDialog').showModal();
   } catch (error) { state = defaultState(); ensureHealthReserve(); storageError = error?.message || 'Coffre local indisponible'; render(); showView(); $('#welcomeDialog').showModal(); }
 })();

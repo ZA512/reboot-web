@@ -32,6 +32,7 @@ function errorCategory(code) {
 }
 function publicError(category) { return category === 'reauth_required' ? 'Google Drive doit être reconnecté.' : category === 'temporary' ? 'Google Drive est temporairement indisponible.' : 'La connexion Google Drive est indisponible.'; }
 function opaqueId(value) { return createHash('sha256').update(String(value || '')).digest('hex').slice(0, 12); }
+function hasDriveAppDataScope(connection) { return String(connection?.granted_scopes || '').split(' ').includes(DRIVE_SCOPE); }
 async function requestJson(request, maxBytes = 4096) {
   let size = 0, source = '';
   for await (const chunk of request) {
@@ -72,9 +73,11 @@ export function createBroker(config, options = {}) {
     }
     if (pathname === '/healthz' && request.method === 'GET') return json(response, 200, { ok: true }, common);
     if (pathname === '/api/oauth/google/status' && request.method === 'GET') {
-      const session = getSession(request), association = session && database.anyConnectionForSession(session.id), connection = association && !association.revoked_at ? association : null;
+      const session = getSession(request), association = session && database.anyConnectionForSession(session.id);
+      const authorizationIncomplete = association && !association.revoked_at && !hasDriveAppDataScope(association);
+      const connection = association && !association.revoked_at && !authorizationIncomplete ? association : null;
       const dataset = connection ? database.datasetForSession(session.id) : null;
-      return json(response, 200, { connected: Boolean(connection), reauth_required: Boolean(association?.revoked_at), provider: association ? 'google' : null, scopes: association ? String(association.granted_scopes).split(' ').filter(Boolean) : [], csrf_token: session?.csrfToken || null, dataset_id: dataset?.id || null, tombstone_retention_days: config.tombstoneRetentionDays }, { ...common, ...(session ? { 'Set-Cookie': sessionCookie(session, config) } : {}) });
+      return json(response, 200, { connected: Boolean(connection), reauth_required: Boolean(association?.revoked_at || authorizationIncomplete), provider: association ? 'google' : null, scopes: association ? String(association.granted_scopes).split(' ').filter(Boolean) : [], csrf_token: session?.csrfToken || null, dataset_id: dataset?.id || null, tombstone_retention_days: config.tombstoneRetentionDays }, { ...common, ...(session ? { 'Set-Cookie': sessionCookie(session, config) } : {}) });
     }
     if (pathname === '/api/oauth/google/start' && request.method === 'GET') {
       database.cleanup();
@@ -95,6 +98,7 @@ export function createBroker(config, options = {}) {
       let identityResponse, identity;
       try { identityResponse = await fetchImpl(`${config.googleTokenInfoUrl}?id_token=${encodeURIComponent(tokenResult.body.id_token)}`, { headers: { Accept: 'application/json' } }); identity = await identityResponse.json(); } catch { identityResponse = null; }
       if (!identityResponse?.ok || !identity?.sub || identity.aud !== config.googleClientId || !['accounts.google.com', 'https://accounts.google.com'].includes(identity.iss)) { log('oauth_callback_failed', { code: 'invalid_identity' }); return redirect(response, '/drive.html?drive=oauth_error', common); }
+      if (!hasDriveAppDataScope({ granted_scopes: tokenResult.body.scope || OAUTH_SCOPES })) { log('oauth_callback_failed', { code: 'missing_drive_appdata_scope' }); return redirect(response, '/drive.html?drive=oauth_scope_missing', common); }
       const encrypted = encryptSecret(tokenResult.body.refresh_token, config.tokenEncryptionKeys, config.activeTokenKeyVersion);
       database.attachGoogleConnection(session.id, identity.sub, encrypted, String(tokenResult.body.scope || OAUTH_SCOPES), config.activeTokenKeyVersion);
       log('oauth_connected');
@@ -106,6 +110,7 @@ export function createBroker(config, options = {}) {
       if (!csrfAllowed(request, session)) return json(response, 403, { error: 'csrf_failed', category: 'configuration_error', message: 'Requête refusée.' }, common);
       const connection = database.connectionForSession(session.id);
       if (!connection) return json(response, 401, { error: 'reauth_required', category: 'reauth_required', message: 'Google Drive doit être reconnecté.' }, common);
+      if (!hasDriveAppDataScope(connection)) return json(response, 401, { error: 'missing_drive_appdata_scope', category: 'reauth_required', message: 'Google Drive doit être reconnecté.' }, common);
       let refreshToken;
       try { refreshToken = decryptSecret(connection.encrypted_refresh_token, config.tokenEncryptionKeys); }
       catch { log('token_refresh_failed', { code: 'decrypt_failed' }); return json(response, 503, { error: 'broker_configuration', category: 'configuration_error', message: publicError('configuration_error') }, common); }
