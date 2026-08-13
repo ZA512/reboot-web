@@ -1,5 +1,6 @@
 services:
   reboot-web:
+    image: ghcr.io/za512/reboot-web:latest
     build:
       context: .
       dockerfile: Dockerfile
@@ -9,6 +10,7 @@ services:
 
   oauth-broker:
     profiles: [oauth]
+    image: ghcr.io/za512/reboot-oauth-broker:latest
     build:
       context: ./broker
       dockerfile: Dockerfile

@@ -166,6 +166,24 @@ La seconde commande doit répondre `HTTP 200`. Sans session navigateur, le JSON 
 
 La première ouverture sur un nouveau domaine crée un coffre local indépendant : les données ne migrent donc pas automatiquement entre `localhost`, l’adresse IP et le domaine final. Connectez d’abord Drive depuis l’appareil qui possède vos données actuelles ; l’application y fusionnera la copie locale avec `reboot-data.json`. Le menu **Sauvegardes** permet aussi une sauvegarde et restauration manuelles.
 
+## Images Docker publiées par GitHub
+
+Chaque `push` déclenche un build avec GitHub Actions. Les builds de branches et de pull requests vérifient que les deux images de production se construisent correctement. Un push sur `main` les publie dans GitHub Container Registry :
+
+```text
+ghcr.io/za512/reboot-web:latest
+ghcr.io/za512/reboot-oauth-broker:latest
+```
+
+Chaque publication porte également un tag immuable `sha-…`. Les services Compose utilisent ces images comme tags par défaut tout en gardant `build:` pour le développement local. Pour qu’Unraid puisse les récupérer sans identifiant, rendez les deux packages publics dans GitHub après leur première publication ; sinon, connectez Docker à GitHub Container Registry avec un jeton ayant le droit `read:packages`.
+
+Pour mettre à jour une installation qui utilise les images publiées :
+
+```bash
+docker compose --profile oauth pull
+docker compose --profile oauth up -d --force-recreate
+```
+
 ## Tests navigateur dans Docker
 
 Les tests utilisent un navigateur Playwright neuf, sans cache ni service worker persistant :
