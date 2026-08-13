@@ -46,6 +46,7 @@ try {
   await page.locator('#syncCompleteDialog').waitFor({ state: 'hidden' });
   console.log('PASS Drive synchronization returns to tracking with a dismissible confirmation');
 
+  await page.goto(`${baseUrl}/app.html#reserves`, { waitUntil: 'networkidle' });
   await page.locator('#addReserveButton').click();
   await page.locator('#reserveName').fill('Noël & anniversaires');
   await page.locator('#reserveBalance').fill('0');
@@ -58,6 +59,7 @@ try {
   await assertContains(page.locator('#budgetTotal'), '571,15');
   console.log('PASS reserve reduces available weekly budget');
 
+  await page.goto(`${baseUrl}/app.html#week`, { waitUntil: 'networkidle' });
   await page.locator('#addExpenseButton').click();
   await page.locator('#expenseDialog').locator('.close-button').click();
   await page.locator('#expenseDialog').waitFor({ state: 'hidden' });
@@ -71,16 +73,23 @@ try {
   await page.locator('#expenseAmount').fill('25');
   await page.locator('#expenseLabel').fill('Test correction');
   await page.locator('#saveExpenseButton').click();
-  await page.locator('[data-edit-expense]').click();
-  await page.locator('#expenseAmount').fill('30');
+  await page.locator('#expenseList [data-edit-expense]').click();
+  await page.locator('#expenseAmount').fill('60');
   await page.locator('#expenseNature').selectOption('necessary');
   await page.locator('#expenseHealth').check();
   await page.locator('#saveExpenseButton').click();
   await page.locator('#expenseDialog').waitFor({ state: 'hidden' });
-  await assertContains(page.locator('#remaining'), '541,15');
+  await assertContains(page.locator('#remaining'), '571,15');
   await assertContains(page.locator('#expenseList'), 'Nécessaire');
   await assertContains(page.locator('#expenseList'), 'Santé');
-  await page.locator('[data-delete]').click();
+  await page.goto(`${baseUrl}/app.html#reserves`, { waitUntil: 'networkidle' });
+  await assertContains(page.locator('#healthCurrentBalance'), '-60,00');
+  if (await page.locator('#healthAlert').isHidden()) throw new Error('Health reserve must propose rebalancing once its deficit reaches 50 euros');
+  await page.locator('#rebalanceHealthButton').click();
+  if (await page.locator('#rebalanceAmount').inputValue() !== '60.00') throw new Error('Health rebalancing must prefill the current deficit');
+  await page.locator('#rebalanceDialog .close-button').click();
+  await page.goto(`${baseUrl}/app.html#week`, { waitUntil: 'networkidle' });
+  await page.locator('#expenseList [data-delete]').click();
   await assertContains(page.locator('#remaining'), '571,15');
   await page.locator('#addExpenseButton').click();
   await page.locator('#expenseAmount').fill('50');
@@ -88,13 +97,13 @@ try {
   await page.locator('input[name="funding"][value="annualized"]').check();
   await page.locator('#saveExpenseButton').click();
   await assertContains(page.locator('#remaining'), '571,15');
-  await page.locator('[data-delete]').click();
+  await page.locator('#expenseList [data-delete]').click();
   await page.locator('#addRefundButton').click();
   await page.locator('#refundAmount').fill('15');
   await page.locator('#refundLabel').fill('Remboursement mutuelle');
   await page.locator('#refundForm button[value="default"]').click();
   await assertContains(page.locator('#remaining'), '586,15');
-  await page.locator('[data-delete-refund]').click();
+  await page.locator('#expenseList [data-delete-refund]').click();
   await assertContains(page.locator('#remaining'), '571,15');
   const auditEvents = await page.evaluate(async () => (await RebootSecureStorage.read('reboot-local-v1', 'reboot-local-v1'))?.auditEvents?.filter(event => event.entity === 'expense').length || 0);
   if (auditEvents < 4) throw new Error('Expense corrections must retain an audit trail');
@@ -111,6 +120,7 @@ try {
   await page.locator('#saveExpenseButton').click();
   await assertContains(page.locator('#historyList'), 'Historique corrigé');
   await page.locator('#historyList [data-delete]').click();
+  await page.goto(`${baseUrl}/app.html#reserves`, { waitUntil: 'networkidle' });
   await page.locator('[data-edit-reserve]').click();
   await page.locator('#reserveMonthly').fill('130');
   await page.locator('#saveReserveButton').click();
@@ -121,6 +131,7 @@ try {
   await page.locator('#saveReserveButton').click();
   await page.locator('#reserveDialog').waitFor({ state: 'hidden' });
   await assertContains(page.locator('#budgetTotal'), '571,15');
+  await page.goto(`${baseUrl}/app.html#reserves`, { waitUntil: 'networkidle' });
   await page.locator('#addReserveButton').click();
   await page.locator('#reserveName').fill('Nouveau canapé');
   await page.locator('input[name="reserveKind"][value="goal"]').check();
@@ -142,7 +153,8 @@ try {
   await assertContains(page.locator('#list'), 'Modifié');
   console.log('PASS correction history remains readable locally');
 
-  await page.goto(`${baseUrl}/sauvegarde.html`, { waitUntil: 'networkidle' });
+  await page.goto(`${baseUrl}/sauvegarder.html`, { waitUntil: 'networkidle' });
+  await page.locator('input[name="mode"][value="protected"]').check();
   await page.locator('#backupCode').fill('REBOOT-test-code-2026');
   await page.locator('#backupCodeConfirm').fill('REBOOT-test-code-2026');
   await page.locator('#backupAcknowledgement').check();
@@ -157,13 +169,14 @@ try {
   await page.goto(`${baseUrl}/app.html`, { waitUntil: 'networkidle' });
   await page.locator('#welcomeDialog').waitFor({ state: 'visible' });
   if (await page.locator('#welcomeDialog .welcome-option').count() !== 3) throw new Error('New users need distinct local, Drive creation, and Drive recovery choices');
-  await assertContains(page.locator('#welcomeDialog'), 'J’ai déjà un budget Google Drive');
-  await page.goto(`${baseUrl}/sauvegarde.html`, { waitUntil: 'networkidle' });
+  await assertContains(page.locator('#welcomeDialog'), 'Récupérer un budget Drive');
+  await page.goto(`${baseUrl}/restaurer.html`, { waitUntil: 'networkidle' });
   await page.locator('#archiveFile').setInputFiles(backupPath);
+  await page.locator('#codeField').waitFor({ state: 'visible' });
   await page.locator('#restoreCode').fill('REBOOT-test-code-2026');
   await page.locator('#checkArchive').click();
   await page.locator('#archiveSummary').waitFor({ state: 'visible' });
-  await assertContains(page.locator('#archiveSummary'), '2 réserve');
+  await assertContains(page.locator('#archiveSummary'), '3 réserve');
   await page.locator('#restoreAcknowledgement').check();
   await page.locator('#restoreArchive').click();
   await page.goto(`${baseUrl}/app.html`, { waitUntil: 'networkidle' });
@@ -172,10 +185,9 @@ try {
 
   await page.goto(`${baseUrl}/drive.html?action=restore`, { waitUntil: 'networkidle' });
   await assertContains(page.locator('#driveTitle'), 'Retrouvez votre budget');
-  if (await page.locator('#syncArea').isVisible()) throw new Error('Restore flow must not offer archive creation or synchronization');
-  await page.locator('#securityProtected').check();
-  await page.locator('#recoveryCode').waitFor({ state: 'visible' });
-  if (!(await page.locator('#recoveryCode').getAttribute('placeholder'))?.includes('Collez') || await page.locator('#generateCode').isVisible()) throw new Error('Restore flow must ask for the existing code without proposing a new one');
+  if (await page.locator('#newSync').isVisible()) throw new Error('Restore flow must not offer synchronization creation');
+  await page.locator('input[name="restoreSecurity"][value="protected"]').check();
+  await page.locator('#restoreCodeField').waitFor({ state: 'visible' });
   await page.goto(`${baseUrl}/drive.html`, { waitUntil: 'networkidle' });
   const publicClientId = await page.evaluate(() => RebootDrive.config().clientId);
   if (!publicClientId.endsWith('.apps.googleusercontent.com')) throw new Error('Google Drive must use the public site Client ID without asking each user');
@@ -185,9 +197,6 @@ try {
   await page.locator('#generateCode').click();
   const generatedCode = await page.locator('#recoveryCode').inputValue();
   if (generatedCode.length < 16 || await page.locator('#downloadCode').isHidden()) throw new Error('Protected Drive mode must generate a downloadable recovery code');
-  if (await page.locator('#download').isVisible()) throw new Error('Full restore must remain an advanced option, not compete with normal synchronization');
-  await page.locator('#restoreDetails').click();
-  await page.locator('#download').waitFor({ state: 'visible' });
   const plainArchive = await page.evaluate(async () => {
     const text = await RebootArchive.create('', { encrypted: false });
     return { archive: JSON.parse(text), payload: await RebootArchive.open(text, '') };
@@ -256,7 +265,8 @@ try {
   await assertContains(page.locator('#signalText'), 'calculateur a été modifié');
   console.log('PASS calculator budget drives tracking without double-counting its own reserves');
 
-  await page.goto(`${baseUrl}/sauvegarde.html`, { waitUntil: 'networkidle' });
+  await page.goto(`${baseUrl}/sauvegarder.html`, { waitUntil: 'networkidle' });
+  await page.locator('input[name="mode"][value="protected"]').check();
   await page.locator('#backupCode').fill('REBOOT-calculator-code-2026');
   await page.locator('#backupCodeConfirm').fill('REBOOT-calculator-code-2026');
   await page.locator('#backupAcknowledgement').check();
@@ -266,7 +276,9 @@ try {
   const calculatorBackupPath = await calculatorBackup.path();
   if (!calculatorBackupPath) throw new Error('Calculator backup was not downloaded');
   await page.evaluate(() => RebootSecureStorage.clear('reboot-calculator-v1', 'reboot-site-v02'));
+  await page.goto(`${baseUrl}/restaurer.html`, { waitUntil: 'networkidle' });
   await page.locator('#archiveFile').setInputFiles(calculatorBackupPath);
+  await page.locator('#codeField').waitFor({ state: 'visible' });
   await page.locator('#restoreCode').fill('REBOOT-calculator-code-2026');
   await page.locator('#checkArchive').click();
   await page.locator('#archiveSummary').waitFor({ state: 'visible' });

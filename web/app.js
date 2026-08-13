@@ -4,596 +4,213 @@ const CALCULATOR_DATABASE = 'reboot-calculator-v1';
 const CALCULATOR_STORE = 'reboot-site-v02';
 const DAY_NAMES = ['dimanche', 'lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi'];
 const currency = new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'EUR' });
+const $ = selector => document.querySelector(selector);
+const $$ = selector => [...document.querySelectorAll(selector)];
 let saveQueue = Promise.resolve();
-
-const defaultState = () => ({
-  householdName: 'Notre foyer',
-  configured: false,
-  baseWeeklyBudgetMinor: 0,
-  weeklyBudgetMinor: 0,
-  rebootDay: null,
-  expenses: [],
-  refunds: [],
-  reserves: [],
-  importedBankOperations: [],
-  auditEvents: [],
-  backupStatus: {},
-  onboarding: null
-});
-
-let state = defaultState();
-let storageError = '';
+let state;
+let calculatorState = null;
 let calculatorRefreshReason = '';
+let storageError = '';
 let editingExpenseId = null;
+let editingRefundId = null;
 let editingReserveId = null;
-const $ = (selector) => document.querySelector(selector);
+let editingCharge = null;
+let movementFilter = 'all';
 
-async function loadState() {
-  const stored = await RebootSecureStorage.read(DATABASE_NAME, LEGACY_STORAGE_KEY);
-  return stored ? { ...defaultState(), ...stored } : defaultState();
+const defaultState = () => ({ householdName: 'Notre foyer', configured: false, baseWeeklyBudgetMinor: 0, weeklyBudgetMinor: 0, rebootDay: null, expenses: [], refunds: [], reserves: [], reserveTransfers: [], importedBankOperations: [], auditEvents: [], backupStatus: {}, onboarding: null });
+const createId = () => crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+const snapshot = value => JSON.parse(JSON.stringify(value));
+const escapeHtml = value => String(value ?? '').replace(/[&<>"']/g, character => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' }[character]));
+const dateKey = date => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+const shortDate = value => new Intl.DateTimeFormat('fr-FR', { day: 'numeric', month: 'short' }).format(new Date(`${value}T12:00:00`));
+const formatMoney = minor => currency.format((Number(minor) || 0) / 100);
+const eurosToMinor = value => { const normalized = String(value ?? '').trim().replace(',', '.'); if (!normalized || !/^\d+(\.\d{1,2})?$/.test(normalized)) return 0; const [euros, cents = ''] = normalized.split('.'); return Number(euros) * 100 + Number((cents + '00').slice(0, 2)); };
+
+function ensureHealthReserve() {
+  state.expenses ||= []; state.refunds ||= []; state.reserves ||= []; state.reserveTransfers ||= []; state.auditEvents ||= []; state.backupStatus ||= {};
+  let health = state.reserves.find(reserve => reserve.kind === 'health');
+  if (!health) {
+    health = { id: createId(), name: 'Santé', kind: 'health', initialBalanceMinor: 0, openedOn: dateKey(new Date()), real: false, includedInCalculatorBudget: true, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
+    state.reserves.unshift(health);
+    return true;
+  }
+  return false;
 }
 
-function saveState() {
-  state.updatedAt = new Date().toISOString();
-  saveQueue = saveQueue.then(() => RebootSecureStorage.save(DATABASE_NAME, state)).then(() => {
-    storageError = '';
-  }).catch((error) => {
-    storageError = `${error?.name || 'Erreur inconnue'}${error?.message ? `: ${error.message}` : ''}`;
-    console.error('REBOOT storage error', error);
-    $('#freshness').innerHTML = `<span class="status-dot" style="background:#d96b50"></span>Stockage local indisponible (${storageError})`;
-  });
-  return saveQueue;
-}
+async function loadState() { const stored = await RebootSecureStorage.read(DATABASE_NAME, LEGACY_STORAGE_KEY); return { ...defaultState(), ...(stored || {}) }; }
+function saveState() { state.updatedAt = new Date().toISOString(); saveQueue = saveQueue.then(() => RebootSecureStorage.save(DATABASE_NAME, state)).catch(error => { storageError = error?.message || 'Stockage indisponible'; renderFreshness(); }); return saveQueue; }
+function recordEvent(type, entity, entityId, before = null, after = null) { state.auditEvents.push({ id: createId(), type, entity, entityId, at: new Date().toISOString(), before: before ? snapshot(before) : null, after: after ? snapshot(after) : null }); }
 
-function showSyncCompleteNotice() {
-  let notice;
-  try { notice = JSON.parse(sessionStorage.getItem('reboot-sync-complete') || 'null'); sessionStorage.removeItem('reboot-sync-complete'); } catch { return false; }
-  if (!notice) return false;
-  $('#syncCompleteMessage').textContent = notice.restored
-    ? 'Votre budget Google a été récupéré sur cet appareil. Vous pouvez maintenant reprendre votre suivi.'
-    : notice.merged
-    ? 'Votre copie Google est à jour et les changements trouvés sur vos autres appareils ont été réunis.'
-    : `Votre sauvegarde ${notice.mode === 'protected' ? 'protégée' : ''} est maintenant enregistrée dans Google Drive.`;
-  $('#syncCompleteDialog').showModal();
-  return true;
-}
-
-function eurosToMinor(value) {
-  const normalized = String(value ?? '').trim().replace(',', '.');
-  if (!normalized || !/^\d+(\.\d{1,2})?$/.test(normalized)) return 0;
-  const [euros, cents = ''] = normalized.split('.');
-  return Number(euros) * 100 + Number((cents + '00').slice(0, 2));
-}
-
-function formatMoney(minor) {
-  return currency.format((Number(minor) || 0) / 100);
-}
-
-function dateKey(date) {
-  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
-}
-
-function startOfCycle(today = new Date()) {
-  if (state.rebootDay === null || state.rebootDay === undefined || !state.configured) return null;
-  const start = new Date(today.getFullYear(), today.getMonth(), today.getDate());
-  const difference = (start.getDay() - Number(state.rebootDay) + 7) % 7;
-  start.setDate(start.getDate() - difference);
-  return start;
-}
-
-function effectiveWeeklyBudgetMinor() {
-  const base = state.baseWeeklyBudgetMinor || state.weeklyBudgetMinor || 0;
-  const reserveDeduction = state.reserves
-    .filter((reserve) => !reserve.closedAt && !reserve.includedInCalculatorBudget)
-    .reduce((sum, reserve) => sum + Math.ceil((reserve.annualTargetMinor || 0) / 52), 0);
-  return Math.max(0, base - reserveDeduction);
-}
-
-function reserveDeductionMinor() {
-  return state.reserves
-    .filter((reserve) => !reserve.closedAt && !reserve.includedInCalculatorBudget)
-    .reduce((sum, reserve) => sum + Math.ceil((reserve.annualTargetMinor || 0) / 52), 0);
-}
-
+function startOfCycle(today = new Date()) { if (state.rebootDay === null || state.rebootDay === undefined || !state.configured) return null; const start = new Date(today.getFullYear(), today.getMonth(), today.getDate()); start.setDate(start.getDate() - (start.getDay() - Number(state.rebootDay) + 7) % 7); return start; }
+function reserveDeductionMinor() { return state.reserves.filter(reserve => reserve.kind !== 'health' && !reserve.closedAt && !reserve.includedInCalculatorBudget).reduce((sum, reserve) => sum + Math.ceil((reserve.annualTargetMinor || 0) / 52), 0); }
+function effectiveWeeklyBudgetMinor() { return Math.max(0, (state.baseWeeklyBudgetMinor || state.weeklyBudgetMinor || 0) - reserveDeductionMinor()); }
 function cycleInfo() {
   const start = startOfCycle();
   if (!start) return { configured: false, start: null, end: null, daysLeft: null, spentMinor: 0, refundMinor: 0, budgetMinor: 0, remainingMinor: null };
-  const end = new Date(start);
-  end.setDate(end.getDate() + 6);
-  const today = new Date();
+  const end = new Date(start); end.setDate(end.getDate() + 6);
+  const startKey = dateKey(start), endKey = dateKey(end), today = new Date();
+  const weeklyExpenses = state.expenses.filter(expense => expense.funding === 'weekly' && !expense.deletedAt && expense.date >= startKey && expense.date <= endKey);
+  const weeklyTransfers = state.reserveTransfers.filter(transfer => transfer.sourceType === 'weekly' && !transfer.deletedAt && transfer.date >= startKey && transfer.date <= endKey);
+  const spentMinor = weeklyExpenses.reduce((sum, expense) => sum + expense.amountMinor, 0) + weeklyTransfers.reduce((sum, transfer) => sum + transfer.amountMinor, 0);
+  const refundMinor = state.refunds.filter(refund => refund.applyToBudget && !refund.health && !refund.deletedAt && refund.date >= startKey && refund.date <= endKey).reduce((sum, refund) => sum + refund.amountMinor, 0);
   const daysLeft = Math.max(1, Math.ceil((new Date(end.getFullYear(), end.getMonth(), end.getDate() + 1) - new Date(today.getFullYear(), today.getMonth(), today.getDate())) / 86400000));
-  const weeklyExpenses = state.expenses.filter((expense) => expense.funding === 'weekly' && !expense.deletedAt && expense.date >= dateKey(start) && expense.date <= dateKey(end));
-  const spentMinor = weeklyExpenses.reduce((sum, expense) => sum + expense.amountMinor, 0);
-  const refundMinor = state.refunds.filter((refund) => refund.applyToBudget && !refund.deletedAt && refund.date >= dateKey(start) && refund.date <= dateKey(end)).reduce((sum, refund) => sum + refund.amountMinor, 0);
   const budgetMinor = effectiveWeeklyBudgetMinor();
   return { configured: true, start, end, daysLeft, spentMinor, refundMinor, budgetMinor, remainingMinor: budgetMinor - spentMinor + refundMinor };
 }
 
-function shortDate(dateString) {
-  return new Intl.DateTimeFormat('fr-FR', { day: 'numeric', month: 'short' }).format(new Date(`${dateString}T12:00:00`));
+function monthsSince(value, today = new Date()) { const opened = new Date(`${value}T12:00:00`); let months = (today.getFullYear() - opened.getFullYear()) * 12 + today.getMonth() - opened.getMonth(); if (today.getDate() < opened.getDate()) months -= 1; return Math.max(0, months); }
+function reserveBalance(reserve) {
+  const initial = reserve.initialBalanceMinor ?? reserve.balanceMinor ?? 0;
+  const contribution = (reserve.monthlyContributionMinor || 0) * monthsSince(reserve.openedOn || dateKey(new Date()));
+  const expenses = state.expenses.filter(expense => expense.funding === 'reserve' && expense.reserveId === reserve.id && !expense.deletedAt).reduce((sum, expense) => sum + expense.amountMinor, 0);
+  const incoming = state.reserveTransfers.filter(transfer => transfer.toReserveId === reserve.id && !transfer.deletedAt).reduce((sum, transfer) => sum + transfer.amountMinor, 0);
+  const outgoing = state.reserveTransfers.filter(transfer => transfer.sourceType === 'reserve' && transfer.sourceReserveId === reserve.id && !transfer.deletedAt).reduce((sum, transfer) => sum + transfer.amountMinor, 0);
+  return initial + contribution + incoming - outgoing - expenses;
 }
-
-function escapeHtml(value) {
-  return String(value ?? '').replace(/[&<>"']/g, (character) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' }[character]));
-}
-
-function createId() {
-  if (crypto.randomUUID) return crypto.randomUUID();
-  const bytes = crypto.getRandomValues(new Uint8Array(16));
-  bytes[6] = (bytes[6] & 0x0f) | 0x40;
-  bytes[8] = (bytes[8] & 0x3f) | 0x80;
-  const hex = [...bytes].map((byte) => byte.toString(16).padStart(2, '0')).join('');
-  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
-}
-
-function snapshot(value) {
-  return JSON.parse(JSON.stringify(value));
-}
-
-function recordEvent(type, entity, entityId, before = null, after = null) {
-  state.auditEvents.push({ id: createId(), type, entity, entityId, at: new Date().toISOString(), before: before ? snapshot(before) : null, after: after ? snapshot(after) : null });
-}
-
-function calculatorIncludesReserve(name, monthlyContributionMinor) {
-  const lines = state.calculatorBudget?.permanentReserveLines || [];
-  return lines.some((line) => String(line.name).trim().toLocaleUpperCase('fr-FR') === String(name).trim().toLocaleUpperCase('fr-FR')
-    && Math.abs(Number(line.monthlyContributionMinor) - Number(monthlyContributionMinor)) <= 1);
+function isHealthRefund(refund) { if (refund.health) return true; const linked = refund.expenseId && state.expenses.find(expense => expense.id === refund.expenseId); return Boolean(linked?.health); }
+function healthBalances() {
+  const reserve = state.reserves.find(item => item.kind === 'health');
+  const initial = reserve?.initialBalanceMinor || 0;
+  const incoming = state.reserveTransfers.filter(transfer => transfer.toReserveId === reserve?.id && !transfer.deletedAt).reduce((sum, transfer) => sum + transfer.amountMinor, 0);
+  const refunds = state.refunds.filter(refund => !refund.deletedAt && isHealthRefund(refund)).reduce((sum, refund) => sum + refund.amountMinor, 0);
+  const healthExpenses = state.expenses.filter(expense => !expense.deletedAt && expense.health);
+  const allExpenses = healthExpenses.reduce((sum, expense) => sum + expense.amountMinor, 0);
+  const cutoff = new Date(); cutoff.setDate(cutoff.getDate() - 30); const cutoffKey = dateKey(cutoff);
+  const settledExpenses = healthExpenses.filter(expense => expense.date < cutoffKey).reduce((sum, expense) => sum + expense.amountMinor, 0);
+  return { current: initial + incoming + refunds - allExpenses, settled: initial + incoming + refunds - settledExpenses };
 }
 
 function renderFreshness() {
-  const freshness = $('#freshness');
-  if (storageError) {
-    freshness.innerHTML = `<span class="status-dot" style="background:#d96b50"></span>Stockage local indisponible (${storageError})`;
-    return;
-  }
-  const backups = Object.entries(state.backupStatus || {}).filter(([, at]) => at && Number.isFinite(new Date(at).getTime())).sort(([, first], [, second]) => new Date(second) - new Date(first));
-  if (!backups.length) {
-    freshness.innerHTML = '<span class="status-dot"></span>Local uniquement';
-    return;
-  }
-  const [kind, at] = backups[0];
-  const date = new Intl.DateTimeFormat('fr-FR', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }).format(new Date(at));
-  freshness.innerHTML = `<span class="status-dot"></span>${kind === 'drive' ? 'Drive synchronisé' : 'Sauvegarde locale'} · ${date}`;
+  const target = $('#freshness'); if (!target) return;
+  if (storageError) { target.innerHTML = `<span class="status-dot" style="background:#d96b50"></span><span class="sync-label">Stockage indisponible</span>`; return; }
+  const backups = Object.entries(state.backupStatus || {}).filter(([, at]) => at).sort(([, a], [, b]) => new Date(b) - new Date(a));
+  if (!backups.length) { target.innerHTML = '<span class="status-dot"></span><span class="sync-label">Local uniquement</span>'; return; }
+  const [kind, at] = backups[0]; const date = new Intl.DateTimeFormat('fr-FR', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }).format(new Date(at));
+  target.innerHTML = `<span class="status-dot"></span><span class="sync-label">${kind === 'drive' ? 'Drive' : 'Sauvegardé'} · ${date}</span>`;
 }
 
-function render() {
+function renderWeek() {
   const cycle = cycleInfo();
-  const onboardingActive = Boolean(!cycle.configured && state.onboarding?.storage);
-  document.body.classList.toggle('onboarding-active', onboardingActive);
-  $('#onboardingPanel').classList.toggle('hidden', !onboardingActive);
-  if (onboardingActive) {
-    $('#onboardingStorageNote').textContent = state.onboarding.storage === 'drive'
-      ? 'Après le calcul, vous choisirez la protection de votre première sauvegarde Google Drive.'
-      : 'Votre dossier restera dans ce navigateur. Vous pourrez activer Google Drive plus tard si vous le souhaitez.';
-  }
-  renderReviewStatus();
+  $('#householdHeader').textContent = state.householdName || 'Notre foyer';
+  const onboarding = Boolean(!cycle.configured && state.onboarding?.storage); $('#onboardingPanel').classList.toggle('hidden', !onboarding);
   if (!cycle.configured) {
-    $('#remaining').textContent = '—';
-    $('#budgetTotal').textContent = 'À définir';
-    $('#cycleDates').textContent = 'Aucun cycle configuré';
-    $('#daysLeft').textContent = 'Configurez votre semaine';
-    $('#dailyGuide').textContent = '—';
-    $('#balanceTrack').style.width = '0%';
-    $('#reserveDeduction').classList.add('hidden');
-    renderFreshness();
-    renderSignal(cycle);
-    renderExpenses(null);
-    renderReserves();
-    updateSettingsFields();
-    return;
+    $('#remaining').textContent = '—'; $('#budgetTotal').textContent = 'À définir'; $('#cycleDates').textContent = 'Non configuré'; $('#daysLeft').textContent = 'Préparez le budget'; $('#dailyGuide').textContent = '—'; $('#balanceTrack').style.width = '0%'; $('#reserveDeduction').classList.add('hidden');
+  } else {
+    $('#remaining').textContent = formatMoney(cycle.remainingMinor); $('#remaining').classList.toggle('negative', cycle.remainingMinor < 0); $('#budgetTotal').textContent = formatMoney(cycle.budgetMinor); $('#cycleDates').textContent = `${shortDate(dateKey(cycle.start))} → ${shortDate(dateKey(cycle.end))}`; $('#daysLeft').textContent = cycle.daysLeft === 1 ? 'jusqu’à demain' : `${cycle.daysLeft} jours restants`; $('#dailyGuide').textContent = `${formatMoney(Math.max(0, cycle.remainingMinor) / cycle.daysLeft)} / jour`; $('#balanceTrack').style.width = `${cycle.budgetMinor ? Math.min(100, Math.max(0, (cycle.spentMinor - cycle.refundMinor) / cycle.budgetMinor * 100)) : 0}%`;
+    const deduction = reserveDeductionMinor(); $('#reserveDeduction').classList.toggle('hidden', !deduction); $('#reserveDeduction').textContent = deduction ? `Réserves : − ${formatMoney(deduction)} / semaine` : '';
   }
-  const budget = cycle.budgetMinor;
-  const percentageSpent = budget > 0 ? Math.min(100, Math.max(0, ((cycle.spentMinor - cycle.refundMinor) / budget) * 100)) : 0;
-  const dailyGuide = cycle.daysLeft ? Math.max(0, cycle.remainingMinor) / cycle.daysLeft : 0;
-  const remaining = $('#remaining');
-  remaining.textContent = formatMoney(cycle.remainingMinor);
-  remaining.classList.toggle('negative', cycle.remainingMinor < 0);
-  $('#budgetTotal').textContent = formatMoney(budget);
-  $('#cycleDates').textContent = `${shortDate(dateKey(cycle.start))} → ${shortDate(dateKey(cycle.end))}`;
-  $('#daysLeft').textContent = cycle.daysLeft === 1 ? 'jusqu’à demain' : `${cycle.daysLeft} jours restants`;
-  $('#dailyGuide').textContent = `${formatMoney(dailyGuide)} / jour`;
-  const deduction = reserveDeductionMinor();
-  $('#reserveDeduction').classList.toggle('hidden', deduction === 0 && cycle.refundMinor === 0);
-  $('#reserveDeduction').innerHTML = [deduction ? `Réserves : − ${formatMoney(deduction)} / semaine` : '', cycle.refundMinor ? `Remboursements : + ${formatMoney(cycle.refundMinor)}` : ''].filter(Boolean).join('<br>');
-  $('#balanceTrack').style.width = `${percentageSpent}%`;
-  $('#balanceTrack').style.background = cycle.remainingMinor < 0 ? '#e58b76' : '';
-  renderFreshness();
-  renderSignal(cycle);
-  renderExpenses(cycle);
-  renderReserves();
-  updateSettingsFields();
-}
-
-function renderReviewStatus() {
-  const reviewText = $('#reviewText');
-  if (!reviewText) return;
-  const reviewDot = reviewText.previousElementSibling;
-  reviewDot?.classList.toggle('warn', Boolean(calculatorRefreshReason));
-  if (calculatorRefreshReason) {
-    reviewText.textContent = calculatorRefreshReason === 'expired' ? 'Une charge est arrivée à échéance' : 'Budget modifié à envoyer au suivi';
-    return;
-  }
-  const pendingOperations = (state.importedBankOperations || []).filter((operation) => !operation.classification && !operation.reconciledExpenseId).length;
-  if (pendingOperations) {
-    reviewText.textContent = `${pendingOperations} opération${pendingOperations > 1 ? 's' : ''} à vérifier`;
-    return;
-  }
-  if (state.budgetSource !== 'calculator' || !state.calculatorBudget?.updatedAt) {
-    reviewText.textContent = 'Budget provisoire à structurer';
-    return;
-  }
-  const updatedAt = new Intl.DateTimeFormat('fr-FR', { day: 'numeric', month: 'short', year: 'numeric' }).format(new Date(state.calculatorBudget.updatedAt));
-  reviewText.textContent = `Budget calculé le ${updatedAt}`;
+  renderSignal(cycle); renderCurrentExpenses(cycle); renderHealth(); renderFreshness();
 }
 
 function renderSignal(cycle) {
-  const title = $('#signalTitle');
-  const text = $('#signalText');
-  if (!cycle.configured || (!state.baseWeeklyBudgetMinor && !state.weeklyBudgetMinor)) {
-    title.textContent = 'Préparez votre budget';
-    text.textContent = 'Ajoutez vos revenus, charges et dépenses annuelles dans le calculateur avant de suivre vos dépenses.';
-    return;
-  }
-  if (calculatorRefreshReason) {
-    title.textContent = 'Budget à actualiser';
-    text.textContent = calculatorRefreshReason === 'expired'
-      ? 'Une charge du calculateur est arrivée à échéance. Confirmez-la puis renvoyez le budget vers ce suivi.'
-      : 'Le calculateur a été modifié depuis le dernier envoi. Renvoyez le budget une fois vos changements vérifiés.';
-    return;
-  }
-  if (cycle.remainingMinor < 0) {
-    title.textContent = 'Le cycle est dépassé';
-    text.textContent = `${formatMoney(Math.abs(cycle.remainingMinor))} au-delà du budget prévu. Le cycle suivant ne sera pas modifié automatiquement.`;
-  } else if (cycle.daysLeft <= 2) {
-    title.textContent = 'Derniers jours du cycle';
-    text.textContent = `Il reste ${formatMoney(cycle.remainingMinor)} à tenir jusqu’au ${DAY_NAMES[state.rebootDay]}.`;
-  } else {
-    title.textContent = 'Le cap est clair';
-    text.textContent = `Votre repère pour aujourd’hui est de ${formatMoney(Math.max(0, cycle.remainingMinor) / cycle.daysLeft)}. Il reste ${cycle.daysLeft} jours.`;
-  }
+  const card = $('#signalCard'), action = $('#signalAction'); action.classList.add('hidden'); card.classList.remove('hidden');
+  if (!cycle.configured) { $('#signalTitle').textContent = 'Budget à préparer'; $('#signalText').textContent = 'Définissez votre budget semaine avant de commencer.'; return; }
+  if (calculatorRefreshReason) { $('#signalTitle').textContent = 'Budget à actualiser'; $('#signalText').textContent = calculatorRefreshReason === 'expired' ? 'Une charge est arrivée à sa date de fin.' : 'Le calculateur a été modifié depuis le dernier budget appliqué.'; action.classList.remove('hidden'); return; }
+  if (cycle.remainingMinor < 0) { $('#signalTitle').textContent = 'Semaine dépassée'; $('#signalText').textContent = `${formatMoney(Math.abs(cycle.remainingMinor))} au-delà du budget prévu.`; return; }
+  if (cycle.daysLeft <= 2) { $('#signalTitle').textContent = 'Derniers jours'; $('#signalText').textContent = `${formatMoney(cycle.remainingMinor)} jusqu’au prochain ${DAY_NAMES[state.rebootDay]}.`; return; }
+  card.classList.add('hidden');
 }
 
-function renderExpenses(cycle) {
-  const list = $('#expenseList');
-  if (!cycle) {
-    $('#emptyState').classList.remove('hidden');
-    list.innerHTML = '';
-    $('#historySection').classList.add('hidden');
-    return;
+function entryHtml(entry) {
+  if (entry.entryType === 'refund') {
+    const health = isHealthRefund(entry); return `<article class="expense-item refund"><div class="expense-symbol">+</div><div><div class="expense-label">${escapeHtml(entry.label)}</div><div class="expense-meta">${shortDate(entry.date)} · ${health ? 'Remboursement Santé' : 'Remboursement'}</div></div><div class="expense-amount">+ ${formatMoney(entry.amountMinor)}</div><div class="expense-actions"><button class="delete-expense" data-edit-refund="${entry.id}">Modifier</button><button class="delete-expense" data-delete-refund="${entry.id}">Supprimer</button></div></article>`;
   }
-  const entries = [...state.expenses.filter((expense) => !expense.deletedAt).map((expense) => ({ ...expense, entryType: 'expense' })), ...state.refunds.filter((refund) => !refund.deletedAt).map((refund) => ({ ...refund, entryType: 'refund' }))];
-  const currentEntries = entries.filter((entry) => entry.date >= dateKey(cycle.start) && entry.date <= dateKey(cycle.end)).sort((a, b) => `${b.date}${b.createdAt}`.localeCompare(`${a.date}${a.createdAt}`));
-  $('#emptyState').classList.toggle('hidden', currentEntries.length > 0);
-  list.innerHTML = currentEntries.map(expenseHtml).join('');
-  const historicalEntries = entries.filter((entry) => entry.date < dateKey(cycle.start) || entry.date > dateKey(cycle.end)).sort((a, b) => `${b.date}${b.createdAt}`.localeCompare(`${a.date}${a.createdAt}`));
-  $('#historySection').classList.toggle('hidden', historicalEntries.length === 0);
-  $('#historyList').innerHTML = historicalEntries.map(expenseHtml).join('') || '<p class="muted">Aucune opération en dehors de ce cycle.</p>';
-  document.querySelectorAll('[data-delete]').forEach((button) => button.addEventListener('click', () => deleteExpense(button.dataset.delete)));
-  document.querySelectorAll('[data-edit-expense]').forEach((button) => button.addEventListener('click', () => openExpenseDialog(state.expenses.find((expense) => expense.id === button.dataset.editExpense))));
-  document.querySelectorAll('[data-delete-refund]').forEach((button) => button.addEventListener('click', () => deleteRefund(button.dataset.deleteRefund)));
+  const fundingLabel = entry.health ? 'Réserve Santé' : entry.funding === 'weekly' ? 'Semaine' : entry.funding === 'reserve' ? `Réserve · ${escapeHtml(entry.reserveName || '')}` : entry.funding === 'annualized' ? 'Déjà prévue' : 'Transfert';
+  const nature = ({ necessary: 'Nécessaire', pleasure: 'Plaisir', postponable: 'Reportable', unexpected: 'Imprévu' })[entry.nature] || '';
+  return `<article class="expense-item ${entry.health ? 'health' : entry.funding}"><div class="expense-symbol">−</div><div><div class="expense-label">${escapeHtml(entry.label)}</div><div class="expense-meta">${shortDate(entry.date)} · ${fundingLabel}${nature ? ` · ${nature}` : ''}</div></div><div class="expense-amount">− ${formatMoney(entry.amountMinor)}</div><div class="expense-actions"><button class="delete-expense" data-edit-expense="${entry.id}">Modifier</button><button class="delete-expense" data-delete="${entry.id}">Supprimer</button></div></article>`;
+}
+function allEntries() { return [...state.expenses.filter(item => !item.deletedAt).map(item => ({ ...item, entryType: 'expense' })), ...state.refunds.filter(item => !item.deletedAt).map(item => ({ ...item, entryType: 'refund' }))].sort((a, b) => `${b.date}${b.createdAt}`.localeCompare(`${a.date}${a.createdAt}`)); }
+function bindEntryActions(root = document) { root.querySelectorAll('[data-edit-expense]').forEach(button => button.onclick = () => openExpenseDialog(state.expenses.find(item => item.id === button.dataset.editExpense))); root.querySelectorAll('[data-delete]').forEach(button => button.onclick = () => deleteExpense(button.dataset.delete)); root.querySelectorAll('[data-edit-refund]').forEach(button => button.onclick = () => openRefundDialog(state.refunds.find(item => item.id === button.dataset.editRefund))); root.querySelectorAll('[data-delete-refund]').forEach(button => button.onclick = () => deleteRefund(button.dataset.deleteRefund)); }
+function renderCurrentExpenses(cycle) {
+  const entries = !cycle.configured ? [] : allEntries().filter(entry => entry.date >= dateKey(cycle.start) && entry.date <= dateKey(cycle.end)).slice(0, 5);
+  $('#expenseList').innerHTML = entries.map(entryHtml).join(''); $('#emptyState').classList.toggle('hidden', Boolean(entries.length)); bindEntryActions($('#expenseList'));
+  const historical = cycle.configured ? allEntries().filter(entry => entry.date < dateKey(cycle.start) || entry.date > dateKey(cycle.end)) : []; $('#historySection').classList.toggle('hidden', !historical.length); $('#historyList').innerHTML = historical.map(entryHtml).join(''); bindEntryActions($('#historyList'));
+}
+function renderMovements() {
+  const cycle = cycleInfo(), query = $('#movementSearch').value.trim().toLocaleLowerCase('fr-FR'); let entries = allEntries();
+  if (movementFilter === 'week' && cycle.configured) entries = entries.filter(entry => entry.date >= dateKey(cycle.start) && entry.date <= dateKey(cycle.end));
+  if (movementFilter === 'health') entries = entries.filter(entry => entry.health || entry.entryType === 'refund' && isHealthRefund(entry));
+  if (movementFilter === 'refund') entries = entries.filter(entry => entry.entryType === 'refund');
+  if (query) entries = entries.filter(entry => String(entry.label).toLocaleLowerCase('fr-FR').includes(query));
+  $('#allMovementsList').innerHTML = entries.map(entryHtml).join(''); $('#movementsEmpty').classList.toggle('hidden', Boolean(entries.length)); bindEntryActions($('#allMovementsList'));
 }
 
-function expenseHtml(expense) {
-    if (expense.entryType === 'refund') {
-      const linked = expense.expenseId ? state.expenses.find((item) => item.id === expense.expenseId)?.label : '';
-      return `<article class="expense-item refund"><div class="expense-symbol" aria-hidden="true">+</div><div><div class="expense-label">${escapeHtml(expense.label)}</div><div class="expense-meta">${shortDate(expense.date)} · Remboursement${linked ? ` · ${escapeHtml(linked)}` : ''}${expense.applyToBudget ? ' · rétablit le cycle' : ' · historique seulement'}</div></div><div class="expense-amount">+ ${formatMoney(expense.amountMinor)}</div><div class="expense-actions"><button class="delete-expense" data-delete-refund="${expense.id}" type="button">Supprimer</button></div></article>`;
-    }
-    const fundingLabel = expense.funding === 'weekly' ? 'Budget de la semaine' : expense.funding === 'reserve' ? `Réserve · ${escapeHtml(expense.reserveName || 'sans nom')}` : expense.funding === 'annualized' ? 'Charge déjà prévue' : 'Transfert interne';
-    const symbol = expense.funding === 'reserve' ? '↗' : expense.funding === 'transfer' ? '⇄' : '−';
-    const tags = [expense.nature ? ({ necessary: 'Nécessaire', pleasure: 'Plaisir', postponable: 'Reportable', unexpected: 'Imprévu' }[expense.nature] || '') : '', expense.health ? 'Santé' : ''].filter(Boolean).join(' · ');
-    return `<article class="expense-item ${expense.funding}"><div class="expense-symbol" aria-hidden="true">${symbol}</div><div><div class="expense-label">${escapeHtml(expense.label)}</div><div class="expense-meta">${shortDate(expense.date)} · ${fundingLabel}${tags ? ` · ${escapeHtml(tags)}` : ''}</div></div><div class="expense-amount">− ${formatMoney(expense.amountMinor)}</div><div class="expense-actions"><button class="delete-expense" data-edit-expense="${expense.id}" type="button">Modifier</button><button class="delete-expense" data-delete="${expense.id}" type="button">Supprimer</button></div></article>`;
+function renderHealth() {
+  const balances = healthBalances(); $('#healthCurrentBalance').textContent = formatMoney(balances.current); $('#healthSettledBalance').textContent = formatMoney(balances.settled); $('#healthCurrentCard').classList.toggle('negative', balances.current < 0); $('#healthAlert').classList.toggle('hidden', balances.current > -5000);
+  const weekCard = $('#healthWeekCard'); if (balances.current <= -5000) { weekCard.classList.remove('hidden'); $('#healthWeekText').textContent = `${formatMoney(Math.abs(balances.current))} à rééquilibrer.`; } else weekCard.classList.add('hidden');
 }
-
 function renderReserves() {
-  const list = $('#reserveList');
-  const activeReserves = state.reserves.filter((reserve) => !reserve.closedAt);
-  if (!activeReserves.length) {
-    list.innerHTML = '<p class="no-reserve">Aucune réserve pour le moment.</p>';
-    return;
-  }
-  list.innerHTML = activeReserves.map((reserve) => {
-    const budgetLabel = reserve.includedInCalculatorBudget ? 'déjà comprise dans le budget' : `− ${formatMoney(Math.ceil((reserve.annualTargetMinor || 0) / 52))} / sem.`;
-    const goal = reserve.kind === 'goal';
-    const progress = goal && reserve.targetMinor ? ` · ${formatMoney(reserveBalance(reserve))} / ${formatMoney(reserve.targetMinor)}` : '';
-    return `<div class="reserve-item"><div><span class="reserve-name">${escapeHtml(reserve.name)}</span><span class="reserve-kind">${goal ? 'Projet temporaire' : 'Provisionnement annuel'} · ${reserve.real ? 'Compte séparé' : 'Virtuelle'} · ${formatMoney(reserve.monthlyContributionMinor || 0)} / mois · ${budgetLabel}${progress}</span></div><div><span class="reserve-balance">${formatMoney(reserveBalance(reserve))}</span><button class="delete-expense" data-edit-reserve="${reserve.id}" type="button">Modifier</button>${goal ? `<button class="delete-expense" data-close-reserve="${reserve.id}" type="button">Terminer</button>` : ''}</div></div>`;
-  }).join('');
-  list.querySelectorAll('[data-edit-reserve]').forEach((button) => button.addEventListener('click', () => openReserveDialog(state.reserves.find((reserve) => reserve.id === button.dataset.editReserve))));
-  list.querySelectorAll('[data-close-reserve]').forEach((button) => button.addEventListener('click', () => closeReserve(button.dataset.closeReserve)));
+  const reserves = state.reserves.filter(reserve => reserve.kind !== 'health' && !reserve.closedAt), list = $('#reserveList');
+  list.innerHTML = reserves.length ? reserves.map(reserve => `<article class="reserve-item"><div><span class="reserve-name">${escapeHtml(reserve.name)}</span><span class="reserve-kind">${reserve.kind === 'goal' ? 'Projet temporaire' : 'Réserve récurrente'} · ${formatMoney(reserve.monthlyContributionMinor || 0)} / mois</span></div><span class="reserve-balance">${formatMoney(reserveBalance(reserve))}</span><div class="row-actions"><button class="text-button" data-edit-reserve="${reserve.id}">Modifier</button>${reserve.kind === 'goal' ? `<button class="text-button danger" data-close-reserve="${reserve.id}">Terminer</button>` : ''}</div></article>`).join('') : '<div class="empty-state"><h3>Aucune autre réserve</h3><p>Utilisez une suggestion ou créez la vôtre.</p></div>';
+  list.querySelectorAll('[data-edit-reserve]').forEach(button => button.onclick = () => openReserveDialog(state.reserves.find(reserve => reserve.id === button.dataset.editReserve))); list.querySelectorAll('[data-close-reserve]').forEach(button => button.onclick = () => closeReserve(button.dataset.closeReserve));
 }
 
-function openExpenseDialog(expense = null) {
-  editingExpenseId = expense?.id || null;
-  $('#expenseForm').reset();
-  populateReserveOptions();
-  renderRecentLabels();
-  $('#expenseDialogKicker').textContent = expense ? 'Correction d’une dépense' : 'Nouvelle dépense';
-  $('#expenseDialogTitle').textContent = expense ? 'Modifier l’opération' : 'Ajouter au cycle';
-  $('#saveExpenseButton').textContent = expense ? 'Enregistrer les modifications' : 'Enregistrer';
-  $('#expenseDate').value = expense?.date || dateKey(new Date());
-  if (expense) {
-    $('#expenseAmount').value = (expense.amountMinor / 100).toFixed(2);
-    $('#expenseLabel').value = expense.label;
-    const funding = document.querySelector(`input[name="funding"][value="${expense.funding}"]`);
-    if (funding) funding.checked = true;
-    $('#expenseReserve').value = expense.reserveId || '';
-    $('#expenseNature').value = expense.nature || '';
-    $('#expenseHealth').checked = Boolean(expense.health);
-  }
-  toggleReserveChoice();
-  $('#expenseDialog').showModal();
-  $('#expenseAmount').focus();
+function manualEntryActive(entry) { return !entry.endsOn || entry.endsOn >= dateKey(new Date()); }
+function calculatorTotals() {
+  if (!calculatorState) return { income: 0, monthlyCharges: 0, annualCharges: 0, annualNet: 0, weekly: 0 };
+  let income = 0, monthlyCharges = 0, annualCharges = 0;
+  for (const group of calculatorState.groups || []) { if (group.endsOn && group.endsOn < dateKey(new Date())) continue; const amount = Number(group.acceptedAmount) || 0; if (['salary', 'income_monthly'].includes(group.category)) income += amount * 12; if (group.category === 'income_annual') income += amount; if (['charge_monthly', 'reserve_monthly'].includes(group.category)) monthlyCharges += amount * 12; if (group.category === 'charge_annual') annualCharges += amount; }
+  for (const entry of calculatorState.manualMonthly || []) { if (!manualEntryActive(entry)) continue; const amount = Number(entry.amount) || 0; if (entry.type === 'income') income += amount * 12; else monthlyCharges += amount * 12; }
+  const annualNet = (calculatorState.annual || []).reduce((sum, entry) => sum + Math.max(0, (Number(entry.amount) || 0) - (Number(entry.aid) || 0) - (Number(entry.covered) || 0)), 0);
+  return { income, monthlyCharges, annualCharges, annualNet, weekly: (income - monthlyCharges - annualCharges - annualNet) / 52 };
 }
-
-function openRefundDialog() {
-  $('#refundForm').reset();
-  $('#refundDate').value = dateKey(new Date());
-  const expenses = state.expenses.filter((expense) => !expense.deletedAt).sort((a, b) => `${b.date}${b.createdAt}`.localeCompare(`${a.date}${a.createdAt}`));
-  $('#refundExpense').innerHTML = `<option value="">Aucune dépense précise</option>${expenses.map((expense) => `<option value="${expense.id}">${escapeHtml(expense.label)} · ${formatMoney(expense.amountMinor)} · ${shortDate(expense.date)}</option>`).join('')}`;
-  $('#refundDialog').showModal();
-  $('#refundAmount').focus();
+function renderCharges() {
+  const totals = calculatorTotals(); $('#recommendedWeekly').textContent = calculatorState ? `${formatMoney(Math.floor(totals.weekly * 100))} / sem.` : '—'; $('#monthlyChargesTotal').textContent = calculatorState ? formatMoney(Math.round(totals.monthlyCharges / 12 * 100)) : '—'; $('#monthlyIncomeTotal').textContent = calculatorState ? formatMoney(Math.round(totals.income / 12 * 100)) : '—';
+  const entries = [];
+  (calculatorState?.manualMonthly || []).forEach((entry, index) => entries.push({ source: 'manual', index, name: entry.name, type: entry.type, amount: Number(entry.amount) || 0, endsOn: entry.endsOn || '', active: manualEntryActive(entry) }));
+  (calculatorState?.groups || []).forEach((entry, index) => { if (['salary', 'income_monthly', 'charge_monthly', 'reserve_monthly'].includes(entry.category)) entries.push({ source: 'group', index, name: entry.latestLabel || entry.label, type: ['salary', 'income_monthly'].includes(entry.category) ? 'income' : entry.category === 'reserve_monthly' ? 'reserve' : 'charge', amount: Number(entry.acceptedAmount) || 0, endsOn: entry.endsOn || '', active: !entry.endsOn || entry.endsOn >= dateKey(new Date()) }); });
+  $('#chargeList').innerHTML = entries.map(entry => `<article class="charge-row"><div><span class="charge-name">${escapeHtml(entry.name || 'Sans libellé')}</span><span class="charge-meta">${entry.type === 'income' ? 'Revenu' : entry.type === 'reserve' ? 'Réserve' : 'Charge'}${entry.endsOn ? ` · fin ${shortDate(entry.endsOn)}` : ''}${entry.active ? '' : ' · terminée'}</span></div><span class="charge-value">${formatMoney(Math.round(entry.amount * 100))} / mois</span><div class="row-actions"><button class="text-button" data-edit-charge="${entry.source}|${entry.index}">Modifier</button><button class="text-button danger" data-remove-charge="${entry.source}|${entry.index}">Supprimer</button></div></article>`).join('');
+  $('#chargesEmpty').classList.toggle('hidden', Boolean(entries.length));
+  $('#applyBudgetCard').classList.toggle('hidden', !calculatorState || Math.abs((state.baseWeeklyBudgetMinor || 0) - Math.floor(totals.weekly * 100)) < 1);
+  $('#chargeList').querySelectorAll('[data-edit-charge]').forEach(button => button.onclick = () => openChargeDialog(button.dataset.editCharge)); $('#chargeList').querySelectorAll('[data-remove-charge]').forEach(button => button.onclick = () => removeCharge(button.dataset.removeCharge));
 }
+async function saveCalculator() { if (!calculatorState) calculatorState = { mode: 'manual', step: 0, manualMonthly: [], annual: [], groups: [], updatedAt: '' }; calculatorState.updatedAt = new Date().toISOString(); await RebootSecureStorage.save(CALCULATOR_DATABASE, calculatorState); calculatorRefreshReason = 'changed'; renderCharges(); renderSignal(cycleInfo()); }
 
-function populateReserveOptions() {
-  const select = $('#expenseReserve');
-  const activeReserves = state.reserves.filter((reserve) => !reserve.closedAt);
-  select.innerHTML = activeReserves.length ? activeReserves.map((reserve) => `<option value="${reserve.id}">${escapeHtml(reserve.name)} · ${formatMoney(reserveBalance(reserve))}</option>`).join('') : '<option value="">Aucune réserve disponible</option>';
-}
+function render() { renderWeek(); renderMovements(); renderReserves(); renderCharges(); updateSettingsFields(); }
+function showView() { const requested = location.hash.replace('#', '') || 'week', view = ['week', 'movements', 'charges', 'reserves'].includes(requested) ? requested : 'week'; $$('[data-view-panel]').forEach(panel => panel.classList.toggle('hidden', panel.dataset.viewPanel !== view)); $$('[data-view]').forEach(link => link.setAttribute('aria-current', link.dataset.view === view ? 'page' : 'false')); document.title = `REBOOT — ${{ week: 'Semaine', movements: 'Mouvements', charges: 'Charges', reserves: 'Réserves' }[view]}`; if (view === 'charges') renderCharges(); if (view === 'movements') renderMovements(); window.scrollTo({ top: 0, behavior: 'instant' }); }
 
-function toggleReserveChoice() {
-  $('#reserveFundingChoice').classList.toggle('hidden', !state.reserves.some((reserve) => !reserve.closedAt));
-  $('#reserveChoice').classList.toggle('hidden', document.querySelector('input[name="funding"]:checked')?.value !== 'reserve');
-}
+function openExpenseDialog(expense = null, health = false) { editingExpenseId = expense?.id || null; $('#expenseForm').reset(); populateReserveOptions(); renderRecentLabels(); const isHealth = Boolean(expense?.health || health); $('#expenseHealth').checked = isHealth; $('#fundingField').classList.toggle('hidden', isHealth); $('#expenseDialogKicker').textContent = expense ? 'Correction' : isHealth ? 'Réserve Santé' : 'Nouvelle dépense'; $('#expenseDialogTitle').textContent = expense ? 'Modifier le montant' : isHealth ? 'Ajouter une dépense Santé' : 'Ajouter un montant'; $('#saveExpenseButton').textContent = expense ? 'Enregistrer les modifications' : 'Enregistrer'; $('#expenseDate').value = expense?.date || dateKey(new Date()); if (expense) { $('#expenseAmount').value = (expense.amountMinor / 100).toFixed(2); $('#expenseLabel').value = expense.label; const funding = document.querySelector(`input[name="funding"][value="${expense.funding}"]`); if (funding) funding.checked = true; $('#expenseReserve').value = expense.reserveId || ''; $('#expenseNature').value = expense.nature || ''; } toggleReserveChoice(); $('#expenseDialog').showModal(); $('#expenseAmount').focus(); }
+function populateReserveOptions() { const reserves = state.reserves.filter(reserve => reserve.kind !== 'health' && !reserve.closedAt); $('#expenseReserve').innerHTML = reserves.map(reserve => `<option value="${reserve.id}">${escapeHtml(reserve.name)} · ${formatMoney(reserveBalance(reserve))}</option>`).join('') || '<option value="">Aucune réserve</option>'; $('#reserveFundingChoice').classList.toggle('hidden', !reserves.length); }
+function toggleReserveChoice() { const health = $('#expenseHealth').checked; $('#fundingField').classList.toggle('hidden', health); $('#reserveChoice').classList.toggle('hidden', health || document.querySelector('input[name="funding"]:checked')?.value !== 'reserve'); }
+function renderRecentLabels() { const labels = [...new Set(state.expenses.filter(item => !item.deletedAt).sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt))).map(item => item.label).filter(Boolean))].slice(0, 4); $('#recentLabels').innerHTML = labels.map(label => `<button class="recent-label" type="button" data-label="${escapeHtml(label)}">${escapeHtml(label)}</button>`).join(''); $('#recentLabels').querySelectorAll('[data-label]').forEach(button => button.onclick = () => { $('#expenseLabel').value = button.dataset.label; }); }
+async function saveExpense(event) { if (event.submitter?.value === 'cancel') return; event.preventDefault(); const form = new FormData($('#expenseForm')), amountMinor = eurosToMinor(form.get('amount')), label = String(form.get('label') || '').trim(); if (!amountMinor || !label) return; const health = form.get('health') === 'on', funding = health ? 'health' : String(form.get('funding') || 'weekly'), reserve = state.reserves.find(item => item.id === form.get('reserve')); if (funding === 'reserve' && !reserve) return; const existing = editingExpenseId ? state.expenses.find(item => item.id === editingExpenseId) : null; const expense = { id: existing?.id || createId(), date: String(form.get('date') || dateKey(new Date())), createdAt: existing?.createdAt || new Date().toISOString(), updatedAt: new Date().toISOString(), amountMinor, label, funding, reserveId: reserve?.id || '', reserveName: reserve?.name || '', nature: String(form.get('nature') || ''), health }; if (existing) { const before = snapshot(existing); Object.assign(existing, expense); recordEvent('updated', 'expense', existing.id, before, existing); } else { state.expenses.push(expense); recordEvent('created', 'expense', expense.id, null, expense); } await saveState(); $('#expenseDialog').close(); render(); }
+function deleteExpense(id) { const expense = state.expenses.find(item => item.id === id); if (!expense) return; const before = snapshot(expense); expense.deletedAt = new Date().toISOString(); recordEvent('deleted', 'expense', id, before, expense); saveState(); render(); }
 
-function renderRecentLabels() {
-  const labels = [...new Set(state.expenses.filter((expense) => !expense.deletedAt).sort((a, b) => `${b.date}${b.createdAt}`.localeCompare(`${a.date}${a.createdAt}`)).map((expense) => expense.label.trim()).filter(Boolean))].slice(0, 4);
-  $('#recentLabels').innerHTML = labels.map((label) => `<button class="recent-label" type="button" data-label="${escapeHtml(label)}">${escapeHtml(label)}</button>`).join('');
-  $('#recentLabels').querySelectorAll('[data-label]').forEach((button) => button.addEventListener('click', () => { $('#expenseLabel').value = button.dataset.label; $('#expenseLabel').focus(); }));
-}
+function openRefundDialog(refund = null, health = false) { editingRefundId = refund?.id || null; $('#refundForm').reset(); $('#refundDate').value = refund?.date || dateKey(new Date()); const expenses = state.expenses.filter(item => !item.deletedAt); $('#refundExpense').innerHTML = `<option value="">Aucune dépense précise</option>${expenses.map(expense => `<option value="${expense.id}">${escapeHtml(expense.label)} · ${formatMoney(expense.amountMinor)}</option>`).join('')}`; const isHealth = Boolean(refund ? isHealthRefund(refund) : health); $('#refundHealth').checked = isHealth; $('#refundApply').checked = refund ? Boolean(refund.applyToBudget) : !isHealth; $('#refundApplyField').classList.toggle('hidden', isHealth); if (refund) { $('#refundAmount').value = (refund.amountMinor / 100).toFixed(2); $('#refundLabel').value = refund.label; $('#refundExpense').value = refund.expenseId || ''; } $('#refundDialog').showModal(); $('#refundAmount').focus(); }
+async function saveRefund(event) { if (event.submitter?.value === 'cancel') return; event.preventDefault(); const form = new FormData($('#refundForm')), amountMinor = eurosToMinor(form.get('amount')), label = String(form.get('label') || '').trim(); if (!amountMinor || !label) return; const expenseId = String(form.get('expense') || ''), linked = state.expenses.find(item => item.id === expenseId), health = form.get('health') === 'on' || Boolean(linked?.health), existing = editingRefundId ? state.refunds.find(item => item.id === editingRefundId) : null; const refund = { id: existing?.id || createId(), date: String(form.get('date') || dateKey(new Date())), createdAt: existing?.createdAt || new Date().toISOString(), updatedAt: new Date().toISOString(), amountMinor, label, expenseId, health, applyToBudget: health ? false : form.get('apply') === 'on' }; if (existing) { const before = snapshot(existing); Object.assign(existing, refund); recordEvent('updated', 'refund', existing.id, before, existing); } else { state.refunds.push(refund); recordEvent('created', 'refund', refund.id, null, refund); } await saveState(); $('#refundDialog').close(); render(); }
+function deleteRefund(id) { const refund = state.refunds.find(item => item.id === id); if (!refund) return; const before = snapshot(refund); refund.deletedAt = new Date().toISOString(); recordEvent('deleted', 'refund', id, before, refund); saveState(); render(); }
 
-function monthsSince(dateString, today = new Date()) {
-  const opened = new Date(`${dateString}T12:00:00`);
-  let months = (today.getFullYear() - opened.getFullYear()) * 12 + today.getMonth() - opened.getMonth();
-  if (today.getDate() < opened.getDate()) months -= 1;
-  return Math.max(0, months);
-}
+function openReserveDialog(reserve = null, suggestion = '') { editingReserveId = reserve?.id || null; $('#reserveForm').reset(); $('#reserveDialogKicker').textContent = reserve ? 'Correction' : 'Nouvelle réserve'; $('#reserveDialogTitle').textContent = reserve ? 'Modifier la réserve' : 'Créer une réserve'; $('#saveReserveButton').textContent = reserve ? 'Enregistrer' : 'Créer'; $('#reserveOpenedOn').value = reserve?.openedOn || dateKey(new Date()); $('#reserveName').value = reserve?.name || suggestion; const kind = reserve?.kind || (suggestion === 'Nouveau projet' ? 'goal' : 'recurring'); document.querySelector(`input[name="reserveKind"][value="${kind}"]`).checked = true; if (reserve) { $('#reserveBalance').value = ((reserve.initialBalanceMinor || 0) / 100).toFixed(2); $('#reserveMonthly').value = ((reserve.monthlyContributionMinor || 0) / 100).toFixed(2); $('#reserveTarget').value = ((kind === 'goal' ? reserve.targetMinor : reserve.annualTargetMinor) || 0) / 100 || ''; $('#reserveReal').checked = Boolean(reserve.real); } updateReservePreview(); $('#reserveDialog').showModal(); }
+async function saveReserve(event) { if (event.submitter?.value === 'cancel') return; event.preventDefault(); const name = $('#reserveName').value.trim(), kind = document.querySelector('input[name="reserveKind"]:checked')?.value || 'recurring', initialBalanceMinor = eurosToMinor($('#reserveBalance').value), monthlyContributionMinor = eurosToMinor($('#reserveMonthly').value), targetMinor = eurosToMinor($('#reserveTarget').value); if (!name || (!initialBalanceMinor && !monthlyContributionMinor && !targetMinor)) return; const annualTargetMinor = monthlyContributionMinor ? monthlyContributionMinor * 12 : kind === 'recurring' ? targetMinor : 0, existing = editingReserveId ? state.reserves.find(item => item.id === editingReserveId) : null; const reserve = { id: existing?.id || createId(), name, kind, initialBalanceMinor, monthlyContributionMinor: monthlyContributionMinor || (kind === 'recurring' && annualTargetMinor ? Math.floor(annualTargetMinor / 12) : 0), annualTargetMinor, targetMinor: kind === 'goal' ? targetMinor : 0, openedOn: $('#reserveOpenedOn').value || dateKey(new Date()), real: $('#reserveReal').checked, includedInCalculatorBudget: false, createdAt: existing?.createdAt || new Date().toISOString(), updatedAt: new Date().toISOString() }; if (existing) { const before = snapshot(existing); Object.assign(existing, reserve); recordEvent('updated', 'reserve', existing.id, before, existing); } else { state.reserves.push(reserve); recordEvent('created', 'reserve', reserve.id, null, reserve); } await saveState(); $('#reserveDialog').close(); render(); }
+function updateReservePreview() { const kind = document.querySelector('input[name="reserveKind"]:checked')?.value || 'recurring', monthly = eurosToMinor($('#reserveMonthly').value), target = eurosToMinor($('#reserveTarget').value), annual = monthly ? monthly * 12 : kind === 'recurring' ? target : 0; $('#reserveTargetLabel').textContent = kind === 'goal' ? 'Objectif total du projet' : 'Ou objectif sur un an'; $('#reserveTargetHelp').textContent = kind === 'goal' ? 'Le projet reste ouvert jusqu’à ce que vous le terminiez.' : 'Le versement mensuel est prioritaire si les deux champs sont remplis.'; $('#reserveOpenedHelp').textContent = 'Cette date sert de point de départ au solde.'; $('#reserveImpact').innerHTML = annual ? `Impact estimé<strong>− ${formatMoney(Math.ceil(annual / 52))} par semaine</strong>` : 'Renseignez un solde, un versement ou un objectif.'; $('#reserveBankWarning').classList.toggle('hidden', !$('#reserveReal').checked || !monthly); $('#reserveBankWarning').textContent = monthly ? `Prévoir un virement de ${formatMoney(monthly)} par mois vers ce compte.` : ''; }
+function closeReserve(id) { const reserve = state.reserves.find(item => item.id === id); if (!reserve || !confirm(`Terminer « ${reserve.name} » ?`)) return; const before = snapshot(reserve); reserve.closedAt = new Date().toISOString(); recordEvent('closed', 'reserve', id, before, reserve); saveState(); render(); }
 
-function currentReservePeriodStart(reserve, today = new Date()) {
-  const opened = new Date(`${reserve.openedOn || dateKey(today)}T12:00:00`);
-  let anniversary = new Date(today.getFullYear(), opened.getMonth(), opened.getDate(), 12);
-  if (anniversary > today) anniversary.setFullYear(anniversary.getFullYear() - 1);
-  return anniversary < opened ? opened : anniversary;
-}
+function openRebalanceDialog() { const health = healthBalances(); $('#rebalanceAmount').value = health.current < 0 ? (Math.abs(health.current) / 100).toFixed(2) : ''; const reserves = state.reserves.filter(item => item.kind !== 'health' && !item.closedAt && reserveBalance(item) > 0); $('#rebalanceSource').innerHTML = '<option value="weekly">Budget de la semaine</option>' + reserves.map(item => `<option value="${item.id}">${escapeHtml(item.name)} · ${formatMoney(reserveBalance(item))}</option>`).join(''); $('#rebalanceDialog').showModal(); }
+async function saveRebalance(event) { if (event.submitter?.value === 'cancel') return; event.preventDefault(); const amountMinor = eurosToMinor($('#rebalanceAmount').value), source = $('#rebalanceSource').value, health = state.reserves.find(item => item.kind === 'health'); if (!amountMinor || !health) return; if (source !== 'weekly') { const reserve = state.reserves.find(item => item.id === source); if (!reserve || reserveBalance(reserve) < amountMinor) return; } const transfer = { id: createId(), date: dateKey(new Date()), createdAt: new Date().toISOString(), amountMinor, sourceType: source === 'weekly' ? 'weekly' : 'reserve', sourceReserveId: source === 'weekly' ? '' : source, toReserveId: health.id }; state.reserveTransfers.push(transfer); recordEvent('created', 'transfer', transfer.id, null, transfer); await saveState(); $('#rebalanceDialog').close(); render(); }
 
-function monthsBetween(startDate, endDate) {
-  return Math.max(0, (endDate.getFullYear() - startDate.getFullYear()) * 12 + endDate.getMonth() - startDate.getMonth() - (endDate.getDate() < startDate.getDate() ? 1 : 0));
-}
+function openChargeDialog(reference = '') { editingCharge = reference || null; $('#chargeForm').reset(); $('#chargeDialogKicker').textContent = reference ? 'Modification' : 'Nouvelle charge'; $('#chargeDialogTitle').textContent = reference ? 'Modifier la ligne' : 'Ajouter une charge'; if (reference) { const [source, rawIndex] = reference.split('|'), index = Number(rawIndex), entry = source === 'manual' ? calculatorState.manualMonthly[index] : calculatorState.groups[index]; $('#chargeName').value = source === 'manual' ? entry.name : entry.latestLabel || entry.label; $('#chargeType').value = source === 'manual' ? entry.type : ['salary', 'income_monthly'].includes(entry.category) ? 'income' : entry.category === 'reserve_monthly' ? 'reserve' : 'charge'; $('#chargeAmount').value = source === 'manual' ? entry.amount : entry.acceptedAmount; $('#chargeEndsOn').value = entry.endsOn || ''; } $('#chargeDialog').showModal(); }
+async function saveCharge(event) { if (event.submitter?.value === 'cancel') return; event.preventDefault(); const name = $('#chargeName').value.trim(), type = $('#chargeType').value, amount = Number($('#chargeAmount').value), endsOn = $('#chargeEndsOn').value; if (!name || !amount) return; if (!calculatorState) calculatorState = { mode: 'manual', step: 0, manualMonthly: [], annual: [], groups: [] }; if (editingCharge) { const [source, rawIndex] = editingCharge.split('|'), entry = source === 'manual' ? calculatorState.manualMonthly[Number(rawIndex)] : calculatorState.groups[Number(rawIndex)]; if (source === 'manual') Object.assign(entry, { name, type, amount, endsOn }); else Object.assign(entry, { latestLabel: name, acceptedAmount: amount, endsOn, category: type === 'income' ? 'income_monthly' : type === 'reserve' ? 'reserve_monthly' : 'charge_monthly' }); } else calculatorState.manualMonthly.push({ name, type, amount, endsOn, nature: 'fixed', frequency: 'monthly', templateKey: '', note: 'Ajouté depuis l’APP.', search: '', searchSelected: {} }); await saveCalculator(); $('#chargeDialog').close(); render(); }
+async function removeCharge(reference) { if (!confirm('Supprimer cette ligne du budget conseillé ?')) return; const [source, rawIndex] = reference.split('|'), index = Number(rawIndex); if (source === 'manual') calculatorState.manualMonthly.splice(index, 1); else calculatorState.groups[index].category = 'ignore'; await saveCalculator(); render(); }
+async function applyRecommendedBudget() { const totals = calculatorTotals(), weeklyBudgetMinor = Math.floor(totals.weekly * 100); if (weeklyBudgetMinor <= 0) return; state.baseWeeklyBudgetMinor = weeklyBudgetMinor; state.weeklyBudgetMinor = weeklyBudgetMinor; state.configured = state.rebootDay !== null && state.rebootDay !== undefined && state.rebootDay !== ''; state.budgetSource = 'calculator'; state.calculatorBudget = { version: 1, updatedAt: new Date().toISOString(), sourceUpdatedAt: calculatorState.updatedAt, weeklyBudgetMinor, incomeAnnualMinor: Math.round(totals.income * 100), monthlyChargesAnnualMinor: Math.round(totals.monthlyCharges * 100), annualChargesMinor: Math.round((totals.annualCharges + totals.annualNet) * 100), permanentReserveLines: (calculatorState.manualMonthly || []).filter(item => item.type === 'reserve' && manualEntryActive(item)).map(item => ({ name: item.name, monthlyContributionMinor: Math.round(Number(item.amount) * 100) })) }; calculatorRefreshReason = ''; await saveState(); render(); location.hash = '#week'; }
 
-function reserveBalance(reserve) {
-  const opened = new Date(`${reserve.openedOn || dateKey(new Date())}T12:00:00`);
-  const periodStart = currentReservePeriodStart(reserve);
-  const initialBalance = reserve.initialBalanceMinor ?? reserve.balanceMinor ?? 0;
-  const monthlyContribution = reserve.monthlyContributionMinor || 0;
-  const expenses = state.expenses.filter((expense) => expense.funding === 'reserve' && expense.reserveId === reserve.id && !expense.deletedAt);
-  if (reserve.kind === 'goal') return Math.max(0, initialBalance + monthsSince(reserve.openedOn || dateKey(new Date())) * monthlyContribution - expenses.reduce((sum, expense) => sum + expense.amountMinor, 0));
-  const beforePeriod = expenses.filter((expense) => new Date(`${expense.date}T12:00:00`) < periodStart).reduce((sum, expense) => sum + expense.amountMinor, 0);
-  const inPeriod = expenses.filter((expense) => new Date(`${expense.date}T12:00:00`) >= periodStart).reduce((sum, expense) => sum + expense.amountMinor, 0);
-  const balanceAtPeriodStart = initialBalance + monthsBetween(opened, periodStart) * monthlyContribution - beforePeriod;
-  return Math.max(0, balanceAtPeriodStart + monthsSince(dateKey(periodStart)) * monthlyContribution - inPeriod);
-}
+function updateSettingsFields() { $('#householdName').value = state.householdName || 'Notre foyer'; $('#weeklyBudget').value = state.baseWeeklyBudgetMinor ? (state.baseWeeklyBudgetMinor / 100).toFixed(2) : ''; $('#weeklyBudget').disabled = state.budgetSource === 'calculator'; $('#weeklyBudgetHelp').textContent = state.budgetSource === 'calculator' ? 'Ce montant est géré depuis l’écran Charges.' : 'Budget provisoire modifiable ici.'; $('#rebootDay').value = state.rebootDay ?? ''; }
+function openSettings() { updateSettingsFields(); $('#settingsDialog').showModal(); }
+async function saveSettings(event) { if (event.submitter?.value === 'cancel') return; event.preventDefault(); state.householdName = $('#householdName').value.trim() || 'Notre foyer'; if (state.budgetSource !== 'calculator') { const budget = eurosToMinor($('#weeklyBudget').value); if (budget) state.baseWeeklyBudgetMinor = state.weeklyBudgetMinor = budget; } if ($('#rebootDay').value !== '') state.rebootDay = Number($('#rebootDay').value); state.configured = Boolean(state.baseWeeklyBudgetMinor > 0 && state.rebootDay !== null && state.rebootDay !== undefined); await saveState(); $('#settingsDialog').close(); render(); }
+async function refreshCalculatorStatus() { calculatorRefreshReason = ''; try { calculatorState = await RebootSecureStorage.read(CALCULATOR_DATABASE, CALCULATOR_STORE); if (!calculatorState || state.budgetSource !== 'calculator' || !state.calculatorBudget) return; if (calculatorState.updatedAt && calculatorState.updatedAt > (state.calculatorBudget.sourceUpdatedAt || '')) calculatorRefreshReason = 'changed'; const today = dateKey(new Date()); if ((calculatorState.manualMonthly || []).some(item => item.endsOn && item.endsOn < today && item.endsOn >= String(state.calculatorBudget.sourceUpdatedAt || '').slice(0, 10))) calculatorRefreshReason = 'expired'; } catch { calculatorState = null; } }
+function showSyncCompleteNotice() { let notice; try { notice = JSON.parse(sessionStorage.getItem('reboot-sync-complete') || 'null'); sessionStorage.removeItem('reboot-sync-complete'); } catch { return false; } if (!notice) return false; $('#syncCompleteMessage').textContent = notice.restored ? 'Votre budget Google a été récupéré sur cet appareil.' : notice.merged ? 'Les changements trouvés sur vos autres appareils ont été réunis.' : 'Votre copie Google est à jour.'; $('#syncCompleteDialog').showModal(); return true; }
+async function beginOnboarding(storage) { state.onboarding = { storage, startedAt: new Date().toISOString() }; await saveState(); $('#welcomeDialog').close(); location.assign('calculateur.html?onboarding=1'); }
 
-async function saveExpense(event) {
-  if (event.submitter?.value === 'cancel') return;
-  event.preventDefault();
-  const form = new FormData($('#expenseForm'));
-  const amountMinor = eurosToMinor(form.get('amount'));
-  if (!amountMinor || !String(form.get('label')).trim()) return;
-  const funding = form.get('funding');
-  const reserve = state.reserves.find((item) => item.id === form.get('reserve'));
-  if (funding === 'reserve' && !reserve) return;
-  const existing = editingExpenseId ? state.expenses.find((item) => item.id === editingExpenseId) : null;
-  const expense = { id: existing?.id || createId(), date: String(form.get('date') || dateKey(new Date())), createdAt: existing?.createdAt || new Date().toISOString(), updatedAt: new Date().toISOString(), amountMinor, label: String(form.get('label')).trim(), funding, reserveId: reserve?.id || '', reserveName: reserve?.name || '', nature: String(form.get('nature') || ''), health: form.get('health') === 'on' };
-  if (existing) { const before = snapshot(existing); Object.assign(existing, expense); recordEvent('updated', 'expense', existing.id, before, existing); }
-  else { state.expenses.push(expense); recordEvent('created', 'expense', expense.id, null, expense); }
-  await saveState();
-  $('#expenseDialog').close();
-  render();
-}
+$('#addExpenseButton').onclick = () => openExpenseDialog(); $('#emptyAddButton').onclick = () => openExpenseDialog(); $('#movementAddButton').onclick = () => openExpenseDialog(); $('#addHealthExpenseButton').onclick = () => openExpenseDialog(null, true); $('#addRefundButton').onclick = () => openRefundDialog(); $('#addHealthRefundButton').onclick = () => openRefundDialog(null, true); $('#settingsButton').onclick = openSettings; $('#addReserveButton').onclick = () => openReserveDialog(); $('#addChargeButton').onclick = () => openChargeDialog(); $('#rebalanceHealthButton').onclick = openRebalanceDialog; $('#applyRecommendedBudget').onclick = applyRecommendedBudget;
+$('#expenseForm').onsubmit = saveExpense; $('#refundForm').onsubmit = saveRefund; $('#reserveForm').onsubmit = saveReserve; $('#chargeForm').onsubmit = saveCharge; $('#rebalanceForm').onsubmit = saveRebalance; $('#settingsForm').onsubmit = saveSettings;
+$$('input[name="funding"]').forEach(input => input.onchange = toggleReserveChoice); $('#expenseHealth').onchange = toggleReserveChoice; $('#refundHealth').onchange = () => { const health = $('#refundHealth').checked; $('#refundApplyField').classList.toggle('hidden', health); if (health) $('#refundApply').checked = false; }; $('#refundExpense').onchange = () => { const expense = state.expenses.find(item => item.id === $('#refundExpense').value); if (expense?.health) { $('#refundHealth').checked = true; $('#refundHealth').dispatchEvent(new Event('change')); } };
+['reserveMonthly', 'reserveTarget', 'reserveReal'].forEach(id => $(`#${id}`).oninput = updateReservePreview); $$('input[name="reserveKind"]').forEach(input => input.onchange = updateReservePreview);
+$('#movementSearch').oninput = renderMovements; $$('[data-movement-filter]').forEach(button => button.onclick = () => { movementFilter = button.dataset.movementFilter; $$('[data-movement-filter]').forEach(item => item.setAttribute('aria-pressed', item === button ? 'true' : 'false')); renderMovements(); });
+$$('[data-reserve-suggestion]').forEach(button => button.onclick = () => openReserveDialog(null, button.dataset.reserveSuggestion));
+$('#startLocalButton').onclick = () => beginOnboarding('local'); $('#startDriveButton').onclick = () => beginOnboarding('drive'); window.addEventListener('hashchange', showView);
 
-function deleteExpense(id) {
-  const expense = state.expenses.find((item) => item.id === id);
-  if (!expense) return;
-  const before = snapshot(expense);
-  expense.deletedAt = new Date().toISOString();
-  recordEvent('deleted', 'expense', expense.id, before, expense);
-  saveState();
-  render();
-}
-
-async function saveRefund(event) {
-  if (event.submitter?.value === 'cancel') return;
-  event.preventDefault();
-  const form = new FormData($('#refundForm'));
-  const amountMinor = eurosToMinor(form.get('amount'));
-  if (!amountMinor || !String(form.get('label')).trim()) return;
-  const refund = { id: createId(), date: String(form.get('date') || dateKey(new Date())), createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), amountMinor, label: String(form.get('label')).trim(), expenseId: String(form.get('expense') || ''), applyToBudget: form.get('apply') === 'on' };
-  state.refunds.push(refund);
-  recordEvent('created', 'refund', refund.id, null, refund);
-  await saveState();
-  $('#refundDialog').close();
-  render();
-}
-
-function deleteRefund(id) {
-  const refund = state.refunds.find((item) => item.id === id);
-  if (!refund) return;
-  const before = snapshot(refund);
-  refund.deletedAt = new Date().toISOString();
-  recordEvent('deleted', 'refund', refund.id, before, refund);
-  saveState();
-  render();
-}
-
-function openSettings() {
-  updateSettingsFields();
-  $('#settingsDialog').showModal();
-}
-
-function updateSettingsFields() {
-  $('#householdName').value = state.householdName;
-  const budgetInput = $('#weeklyBudget');
-  const budgetFromCalculator = state.budgetSource === 'calculator';
-  budgetInput.value = (state.baseWeeklyBudgetMinor || state.weeklyBudgetMinor) ? ((state.baseWeeklyBudgetMinor || state.weeklyBudgetMinor) / 100).toFixed(2) : '';
-  budgetInput.disabled = budgetFromCalculator;
-  $('#weeklyBudgetHelp').textContent = budgetFromCalculator
-    ? 'Ce montant vient du calculateur. Révisez vos revenus, charges et provisionnements depuis « Réviser le budget ».'
-    : 'Budget provisoire : préparez votre budget dans le calculateur pour le rendre traçable et modifiable.';
-  $('#rebootDay').value = state.rebootDay ?? '';
-}
-
-async function saveSettings(event) {
-  if (event.submitter?.value === 'cancel') return;
-  event.preventDefault();
-  state.householdName = $('#householdName').value.trim() || 'Notre foyer';
-  if (!$('#weeklyBudget').value || $('#rebootDay').value === '') return;
-  if (state.budgetSource !== 'calculator') {
-    state.baseWeeklyBudgetMinor = eurosToMinor($('#weeklyBudget').value);
-    state.weeklyBudgetMinor = state.baseWeeklyBudgetMinor;
-  }
-  state.rebootDay = Number($('#rebootDay').value);
-  state.configured = Boolean(state.baseWeeklyBudgetMinor > 0 && state.rebootDay !== null && state.rebootDay !== undefined);
-  await saveState();
-  $('#settingsDialog').close();
-  render();
-}
-
-function openReserveDialog(reserve = null) {
-  editingReserveId = reserve?.id || null;
-  $('#reserveForm').reset();
-  $('#reserveDialogKicker').textContent = reserve ? 'Correction d’une réserve' : 'Nouvelle réserve';
-  $('#reserveDialogTitle').textContent = reserve ? 'Modifier la réserve' : 'Mettre de côté';
-  $('#saveReserveButton').textContent = reserve ? 'Enregistrer les modifications' : 'Créer la réserve';
-  $('#reserveOpenedOn').value = reserve?.openedOn || dateKey(new Date());
-  const kind = reserve?.kind || 'recurring';
-  document.querySelector(`input[name="reserveKind"][value="${kind}"]`).checked = true;
-  if (reserve) {
-    $('#reserveName').value = reserve.name;
-    $('#reserveBalance').value = ((reserve.initialBalanceMinor ?? reserve.balanceMinor ?? 0) / 100).toFixed(2);
-    $('#reserveMonthly').value = ((reserve.monthlyContributionMinor || 0) / 100).toFixed(2);
-    const target = kind === 'goal' ? reserve.targetMinor : reserve.annualTargetMinor;
-    $('#reserveTarget').value = target ? (target / 100).toFixed(2) : '';
-    $('#reserveReal').checked = Boolean(reserve.real);
-  }
-  updateReservePreview();
-  $('#reserveDialog').showModal();
-}
-
-async function saveReserve(event) {
-  if (event.submitter?.value === 'cancel') return;
-  event.preventDefault();
-  const name = $('#reserveName').value.trim();
-  if (!name) return;
-  const kind = document.querySelector('input[name="reserveKind"]:checked')?.value || 'recurring';
-  const monthlyValue = eurosToMinor($('#reserveMonthly').value);
-  const targetMinor = eurosToMinor($('#reserveTarget').value);
-  const annualTargetMinor = monthlyValue ? monthlyValue * 12 : (kind === 'recurring' ? targetMinor : 0);
-  if (!monthlyValue && !targetMinor) return;
-  const monthlyContributionMinor = monthlyValue || (kind === 'recurring' ? Math.floor(annualTargetMinor / 12) : 0);
-  const existing = editingReserveId ? state.reserves.find((item) => item.id === editingReserveId) : null;
-  const reserve = { id: existing?.id || createId(), name, kind, initialBalanceMinor: eurosToMinor($('#reserveBalance').value), annualTargetMinor, targetMinor: kind === 'goal' ? targetMinor : 0, monthlyContributionMinor, openedOn: $('#reserveOpenedOn').value || dateKey(new Date()), real: $('#reserveReal').checked, includedInCalculatorBudget: kind === 'recurring' && calculatorIncludesReserve(name, monthlyContributionMinor), updatedAt: new Date().toISOString() };
-  if (existing) {
-    const before = snapshot(existing);
-    Object.assign(existing, reserve);
-    state.expenses.filter((expense) => expense.funding === 'reserve' && expense.reserveId === existing.id).forEach((expense) => { expense.reserveName = name; expense.updatedAt = new Date().toISOString(); });
-    recordEvent('updated', 'reserve', existing.id, before, existing);
-  } else { state.reserves.push(reserve); recordEvent('created', 'reserve', reserve.id, null, reserve); }
-  await saveState();
-  $('#reserveDialog').close();
-  render();
-}
-
-function updateReservePreview() {
-  const kind = document.querySelector('input[name="reserveKind"]:checked')?.value || 'recurring';
-  const monthly = eurosToMinor($('#reserveMonthly').value);
-  const target = eurosToMinor($('#reserveTarget').value);
-  const annual = monthly ? monthly * 12 : (kind === 'recurring' ? target : 0);
-  const weekly = Math.ceil(annual / 52);
-  $('#reserveTargetLabel').textContent = kind === 'goal' ? 'Objectif total du projet (facultatif si versement mensuel)' : 'Ou objectif sur un an';
-  $('#reserveTargetHelp').textContent = kind === 'goal' ? 'Le solde ne recommence pas à zéro. Un objectif sans versement permet simplement de suivre une somme déjà disponible.' : 'Renseignez l’un ou l’autre. Si les deux sont remplis, le versement mensuel est prioritaire.';
-  $('#reserveOpenedHelp').textContent = kind === 'goal' ? 'Le solde et les versements restent acquis jusqu’à ce que vous terminiez le projet.' : 'À chaque anniversaire, le calcul repartira du solde de cette date.';
-  $('#reserveImpact').innerHTML = annual ? `Cette réserve réduira le budget disponible de<strong>${formatMoney(weekly)} par semaine</strong>` : kind === 'goal' && target ? 'Ce projet est financé avec la réserve déjà disponible : il ne réduit pas le budget chaque semaine.' : 'Indiquez un versement mensuel ou un objectif annuel pour voir l’impact sur votre budget.';
-  $('#reserveBankWarning').classList.toggle('hidden', !$('#reserveReal').checked || !monthly);
-  if (!$('#reserveBankWarning').classList.contains('hidden')) $('#reserveBankWarning').textContent = `Vérification importante : veuillez mettre en place un virement permanent de votre compte principal vers le compte de réserve, de ${formatMoney(monthly)} par mois.`;
-}
-
-function closeReserve(id) {
-  const reserve = state.reserves.find((item) => item.id === id);
-  if (!reserve || !confirm(`Terminer le projet « ${reserve.name} » ? Il restera dans la sauvegarde, mais ne réduira plus le budget.`)) return;
-  const before = snapshot(reserve);
-  reserve.closedAt = new Date().toISOString();
-  reserve.updatedAt = reserve.closedAt;
-  recordEvent('closed', 'reserve', reserve.id, before, reserve);
-  saveState();
-  render();
-}
-
-async function refreshCalculatorSyncStatus() {
-  calculatorRefreshReason = '';
-  if (state.budgetSource !== 'calculator' || !state.calculatorBudget) return;
+(async function init() {
   try {
-    const calculator = await RebootSecureStorage.read(CALCULATOR_DATABASE, CALCULATOR_STORE);
-    if (!calculator) return;
-    const sourceUpdatedAt = calculator.updatedAt || '';
-    const sentUpdatedAt = state.calculatorBudget.sourceUpdatedAt || '';
-    if (sourceUpdatedAt && (!sentUpdatedAt || sourceUpdatedAt > sentUpdatedAt)) {
-      calculatorRefreshReason = 'changed';
-      return;
-    }
-    const today = dateKey(new Date());
-    const sentDay = sentUpdatedAt.slice(0, 10);
-    const endedSinceLastSend = (calculator.manualMonthly || []).some((entry) => entry.endsOn && entry.endsOn < today && (!sentDay || entry.endsOn >= sentDay));
-    if (endedSinceLastSend) calculatorRefreshReason = 'expired';
-  } catch {
-    // Le suivi reste utilisable même si le dossier du calculateur est absent.
-  }
-}
-
-$('#addExpenseButton').addEventListener('click', openExpenseDialog);
-$('#emptyAddButton').addEventListener('click', openExpenseDialog);
-$('#addRefundButton').addEventListener('click', openRefundDialog);
-$('#settingsButton').addEventListener('click', openSettings);
-$('#addReserveButton').addEventListener('click', () => openReserveDialog());
-$('#expenseForm').addEventListener('submit', saveExpense);
-$('#refundForm').addEventListener('submit', saveRefund);
-$('#settingsForm').addEventListener('submit', saveSettings);
-$('#reserveForm').addEventListener('submit', saveReserve);
-document.querySelectorAll('input[name="funding"]').forEach((input) => input.addEventListener('change', toggleReserveChoice));
-['reserveMonthly', 'reserveTarget', 'reserveReal'].forEach((id) => $(`#${id}`).addEventListener('input', updateReservePreview));
-document.querySelectorAll('input[name="reserveKind"]').forEach((input) => input.addEventListener('change', updateReservePreview));
-async function beginOnboarding(storage) {
-  state.onboarding = { storage, startedAt: new Date().toISOString() };
-  await saveState();
-  $('#welcomeDialog').close();
-  window.location.assign('calculateur.html?onboarding=1');
-}
-
-$('#startLocalButton').addEventListener('click', () => beginOnboarding('local'));
-$('#startDriveButton').addEventListener('click', () => beginOnboarding('drive'));
-
-async function init() {
-  try {
-    if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js?v=26', { updateViaCache: 'none' }).catch(() => {});
-    state = await loadState();
-    state.baseWeeklyBudgetMinor ||= state.weeklyBudgetMinor || 0;
-    state.configured = Boolean(state.baseWeeklyBudgetMinor > 0 && state.rebootDay !== null && state.rebootDay !== undefined && state.rebootDay !== '');
-    await refreshCalculatorSyncStatus();
-    render();
-    const syncNoticeShown = showSyncCompleteNotice();
-    if (!state.configured && !state.onboarding?.storage && !syncNoticeShown) $('#welcomeDialog').showModal();
-  } catch {
-    storageError = 'Coffre IndexedDB verrouillé';
-    render();
-    $('#welcomeDialog').showModal();
-  }
-}
-
-init();
+    if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js?v=38', { updateViaCache: 'none' }).catch(() => {});
+    state = await loadState(); state.baseWeeklyBudgetMinor ||= state.weeklyBudgetMinor || 0; state.configured = Boolean(state.baseWeeklyBudgetMinor > 0 && state.rebootDay !== null && state.rebootDay !== undefined && state.rebootDay !== ''); const migrated = ensureHealthReserve(); if (migrated) await saveState(); await refreshCalculatorStatus(); render(); showView(); const syncShown = showSyncCompleteNotice(); if (!state.configured && !state.onboarding?.storage && !syncShown) $('#welcomeDialog').showModal();
+  } catch (error) { state = defaultState(); ensureHealthReserve(); storageError = error?.message || 'Coffre local indisponible'; render(); showView(); $('#welcomeDialog').showModal(); }
+})();

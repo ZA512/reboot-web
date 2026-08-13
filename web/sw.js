@@ -1,9 +1,10 @@
-const CACHE_NAME = 'reboot-shell-v37';
+const CACHE_NAME = 'reboot-shell-v38';
 const SHELL = [
   './app.html',
   './version.txt',
   './app.css',
   './app-shell.css',
+  './data-page.css',
   './app.js',
   './entry.js',
   './secure-storage.js',
@@ -11,9 +12,10 @@ const SHELL = [
   './google-config.js',
   './drive.js',
   './icon.svg',
-  './verifier.html',
   './historique.html',
   './sauvegarde.html',
+  './sauvegarder.html',
+  './restaurer.html',
   './drive.html',
   './manifest.webmanifest',
   './index.html',

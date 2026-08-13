@@ -1,6 +1,6 @@
 # REBOOT Web
 
-Application web statique local-first pour suivre le budget hebdomadaire d'un foyer.
+Application web statique local-first pour suivre le budget hebdomadaire d'un foyer. L’APP compacte regroupe la semaine en cours, les mouvements, les charges et les réserves, dont une réserve Santé créée par défaut.
 
 ## Structure
 
@@ -40,7 +40,7 @@ docker compose up -d --build
 
 L’application est alors disponible sur `http://IP_DU_SERVEUR:8080/app.html`. Sur Unraid, importez ce dossier comme projet Compose, gardez le port hôte `8080` (ou adaptez-le dans `docker-compose.yml`), puis créez un Proxy Host Nginx Proxy Manager vers `reboot-web:80` si les deux conteneurs partagent le même réseau Docker, ou vers `IP_UNRAID:8080` sinon. Le certificat Let's Encrypt et le nom de domaine restent gérés par le proxy ; REBOOT n'a pas besoin de connaître le domaine.
 
-La première ouverture sur un nouveau domaine crée un coffre local indépendant : les données ne migrent donc pas automatiquement entre `localhost`, l'adresse IP et le domaine final. Utilisez la page **Sauvegarder** pour créer une archive chiffrée, puis restaurez-la sur le domaine définitif.
+La première ouverture sur un nouveau domaine crée un coffre local indépendant : les données ne migrent donc pas automatiquement entre `localhost`, l'adresse IP et le domaine final. Le menu **Sauvegardes** sépare la création et la restauration. Une archive peut être simple ou protégée par un code personnel.
 
 ## Tests navigateur dans Docker
 
@@ -63,7 +63,7 @@ Docker ne sert que `web/`. Aucun backend applicatif n'est présent.
 
 ## Google Drive (optionnel, connexion utilisateur)
 
-La page **Google Drive** envoie ou récupère une archive REBOOT déjà chiffrée, sans backend. Le Client ID OAuth du site est configuré une fois dans `web/google-config.js` : les visiteurs n’ont rien à renseigner, ils se connectent simplement à leur compte Google. Avant de publier, activez **Google Drive API** et ajoutez l’origine JavaScript exacte du site, par exemple `https://budget.exemple.fr`, dans Google Cloud. Le scope demandé est limité à `https://www.googleapis.com/auth/drive.file` : l’application ne manipule que le fichier qu’elle crée.
+La page **Google Drive** explique d’abord que le budget reste local. L’utilisateur peut ensuite créer une synchronisation simple ou protégée, sans backend. Une fois la synchronisation configurée, l’écran affiche son état et propose explicitement d’envoyer les changements locaux ou de récupérer ceux du Drive. Le Client ID OAuth du site est configuré une fois dans `web/google-config.js` : les visiteurs n’ont rien à renseigner, ils se connectent simplement à leur compte Google. Avant de publier, activez **Google Drive API** et ajoutez l’origine JavaScript exacte du site, par exemple `https://budget.exemple.fr`, dans Google Cloud. Le scope demandé est limité à `https://www.googleapis.com/auth/drive.file` : l’application ne manipule que le fichier qu’elle crée.
 
 Le Client ID est public par nature : il peut être livré dans Git et dans le navigateur. En revanche, le code secret OAuth ne doit jamais être ajouté au dépôt ni à l’application. Le jeton d’accès Google est temporaire. L’utilisateur choisit entre une copie simple, lisible dans son Drive, ou une copie chiffrée dans son navigateur avec un code personnel téléchargeable. REBOOT utilise le modèle de jeton OAuth et un upload multipart, comme décrit dans les guides Google sur le [modèle de jeton OAuth](https://developers.google.com/identity/oauth2/web/guides/use-token-model) et l’[envoi de fichier Drive](https://developers.google.com/workspace/drive/api/guides/manage-uploads).
 

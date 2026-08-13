@@ -10,9 +10,9 @@
   function storedConfig() { try { return JSON.parse(localStorage.getItem(CONFIG_KEY) || '{}'); } catch { return {}; } }
   function config() {
     const stored = storedConfig();
-    return { ...stored, clientId: String(window.REBOOT_GOOGLE_CLIENT_ID || stored.clientId || '').trim() };
+    return { ...stored, configured: Boolean(stored.driveFileId), clientId: String(window.REBOOT_GOOGLE_CLIENT_ID || stored.clientId || '').trim() };
   }
-  function rememberRemote(file) { if (file?.id) localStorage.setItem(CONFIG_KEY, JSON.stringify({ ...storedConfig(), driveFileId: file.id, driveVersion: String(file.version || '') })); }
+  function rememberRemote(file, mode) { if (file?.id) localStorage.setItem(CONFIG_KEY, JSON.stringify({ ...storedConfig(), driveFileId: file.id, driveVersion: String(file.version || ''), protectionMode: mode || storedConfig().protectionMode || 'protected', lastSyncAt: new Date().toISOString() })); }
   function timestamp(value) { const parsed = new Date(value || 0).getTime(); return Number.isFinite(parsed) ? parsed : 0; }
   function itemTimestamp(item = {}) { return Math.max(...['updatedAt', 'deletedAt', 'closedAt', 'reviewedAt', 'createdAt', 'importedAt'].map((key) => timestamp(item[key]))); }
   function latest(first, second) { return itemTimestamp(second) > itemTimestamp(first) ? second : first; }
@@ -36,6 +36,7 @@
       expenses: mergeList(local.expenses, remote.expenses, (item) => item.id),
       refunds: mergeList(local.refunds, remote.refunds, (item) => item.id),
       reserves: mergeList(local.reserves, remote.reserves, (item) => item.id),
+      reserveTransfers: mergeList(local.reserveTransfers, remote.reserveTransfers, (item) => item.id),
       auditEvents: mergeList(local.auditEvents, remote.auditEvents, (item) => item.id),
       importedBankOperations: mergeList(local.importedBankOperations, remote.importedBankOperations, (item) => item.fingerprint || item.id),
       bankImportMapping: mapping,
@@ -105,7 +106,7 @@
       merged = true;
     }
     const file = await uploadMerged(token, existing, security);
-    rememberRemote(file);
+    rememberRemote(file, security.mode);
     await RebootArchive.noteBackup('drive');
     return { ...file, merged };
   }
@@ -116,8 +117,21 @@
     if (!file) throw new Error('Aucune sauvegarde REBOOT créée par cette application n’a été trouvée dans ce Drive.');
     const response = await driveFetch(`https://www.googleapis.com/drive/v3/files/${file.id}?alt=media`, token);
     const payload = await RebootArchive.open(await response.text(), security.code);
-    rememberRemote(file);
+    rememberRemote(file, security.mode);
     return { file, payload };
   }
-  window.RebootDrive = { config, synchronize, upload: synchronize, download, mergeStates };
+  async function pull(choice) {
+    const security = securityChoice(choice);
+    const token = await accessToken(config().clientId);
+    const file = await latestFile(token);
+    if (!file) throw new Error('Aucune sauvegarde REBOOT n’a été trouvée dans ce Drive.');
+    const response = await driveFetch(`https://www.googleapis.com/drive/v3/files/${file.id}?alt=media`, token);
+    const remotePayload = await RebootArchive.open(await response.text(), security.code);
+    const localStates = await RebootArchive.readStates();
+    await saveStates(mergeStates(localStates, remotePayload.states));
+    rememberRemote(file, security.mode);
+    await RebootArchive.noteBackup('drive');
+    return { file, merged: true };
+  }
+  window.RebootDrive = { config, synchronize, upload: synchronize, download, pull, mergeStates };
 })();
