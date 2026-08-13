@@ -1,0 +1,5 @@
+.env
+broker/data/
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal

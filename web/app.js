@@ -16,6 +16,7 @@ let editingRefundId = null;
 let editingReserveId = null;
 let editingCharge = null;
 let movementFilter = 'all';
+let driveStatus = null;
 
 const defaultState = () => ({ householdName: 'Notre foyer', configured: false, baseWeeklyBudgetMinor: 0, weeklyBudgetMinor: 0, rebootDay: null, expenses: [], refunds: [], reserves: [], reserveTransfers: [], importedBankOperations: [], auditEvents: [], backupStatus: {}, onboarding: null });
 const createId = () => crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
@@ -83,6 +84,16 @@ function healthBalances() {
 function renderFreshness() {
   const target = $('#freshness'); if (!target) return;
   if (storageError) { target.innerHTML = `<span class="status-dot" style="background:#d96b50"></span><span class="sync-label">Stockage indisponible</span>`; return; }
+  const drive = window.RebootDrive?.config?.();
+  const syncState = driveStatus?.state;
+  $('#syncNow')?.classList.toggle('hidden', !drive?.configured && !['syncing', 'connected_idle', 'sync_error', 'sync_delayed', 'reauth_required'].includes(syncState));
+  if (drive?.configured || ['syncing', 'connected_idle', 'sync_error', 'sync_delayed', 'reauth_required'].includes(syncState)) {
+    const at = drive.lastSyncAt ? new Intl.DateTimeFormat('fr-FR', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }).format(new Date(drive.lastSyncAt)) : '';
+    const label = syncState === 'syncing' ? 'Synchronisation…' : syncState === 'reauth_required' ? 'Drive à reconnecter' : syncState === 'sync_delayed' ? 'Sync retardée' : syncState === 'sync_error' ? 'Sync en attente' : `Drive synchronisé${at ? ` · ${at}` : ''}`;
+    const color = syncState === 'reauth_required' ? '#d58a22' : ['sync_error', 'sync_delayed'].includes(syncState) ? '#7b8a86' : '#0e6f67';
+    target.innerHTML = `<span class="status-dot" style="background:${color}"></span><span class="sync-label">${label}</span>`;
+    return;
+  }
   const backups = Object.entries(state.backupStatus || {}).filter(([, at]) => at).sort(([, a], [, b]) => new Date(b) - new Date(a));
   if (!backups.length) { target.innerHTML = '<span class="status-dot"></span><span class="sync-label">Local uniquement</span>'; return; }
   const [kind, at] = backups[0]; const date = new Intl.DateTimeFormat('fr-FR', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }).format(new Date(at));
@@ -207,10 +218,13 @@ $$('input[name="funding"]').forEach(input => input.onchange = toggleReserveChoic
 $('#movementSearch').oninput = renderMovements; $$('[data-movement-filter]').forEach(button => button.onclick = () => { movementFilter = button.dataset.movementFilter; $$('[data-movement-filter]').forEach(item => item.setAttribute('aria-pressed', item === button ? 'true' : 'false')); renderMovements(); });
 $$('[data-reserve-suggestion]').forEach(button => button.onclick = () => openReserveDialog(null, button.dataset.reserveSuggestion));
 $('#startLocalButton').onclick = () => beginOnboarding('local'); $('#startDriveButton').onclick = () => beginOnboarding('drive'); window.addEventListener('hashchange', showView);
+window.addEventListener('reboot:drive-status', (event) => { driveStatus = event.detail; renderFreshness(); });
+window.addEventListener('reboot:drive-merged', async () => { state = await loadState(); state.baseWeeklyBudgetMinor ||= state.weeklyBudgetMinor || 0; ensureHealthReserve(); await refreshCalculatorStatus(); render(); });
+$('#syncNow').onclick = () => driveStatus?.state === 'reauth_required' ? window.RebootDrive?.connect('/app.html') : window.RebootDrive?.syncNow();
 
 (async function init() {
   try {
-    if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js?v=38', { updateViaCache: 'none' }).catch(() => {});
+    if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js?v=42', { updateViaCache: 'none' }).catch(() => {});
     state = await loadState(); state.baseWeeklyBudgetMinor ||= state.weeklyBudgetMinor || 0; state.configured = Boolean(state.baseWeeklyBudgetMinor > 0 && state.rebootDay !== null && state.rebootDay !== undefined && state.rebootDay !== ''); const migrated = ensureHealthReserve(); if (migrated) await saveState(); await refreshCalculatorStatus(); render(); showView(); const syncShown = showSyncCompleteNotice(); if (!state.configured && !state.onboarding?.storage && !syncShown) $('#welcomeDialog').showModal();
   } catch (error) { state = defaultState(); ensureHealthReserve(); storageError = error?.message || 'Coffre local indisponible'; render(); showView(); $('#welcomeDialog').showModal(); }
 })();

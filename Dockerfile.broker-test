@@ -1,0 +1,4 @@
+FROM node:22-alpine
+WORKDIR /app
+COPY tests/oauth-broker-stub.mjs ./oauth-broker-stub.mjs
+CMD ["node", "oauth-broker-stub.mjs"]

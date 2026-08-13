@@ -92,6 +92,7 @@
     } finally {
       database.close();
     }
+    window.dispatchEvent(new CustomEvent('reboot:storage-saved', { detail: { databaseName } }));
   }
 
   async function clear(databaseName, legacyKey) {
@@ -107,6 +108,7 @@
     } finally {
       database.close();
     }
+    window.dispatchEvent(new CustomEvent('reboot:storage-cleared', { detail: { databaseName } }));
   }
 
   window.RebootSecureStorage = { read, save, clear };

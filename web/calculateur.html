@@ -40,7 +40,7 @@ details{border:1px solid var(--line);border-radius:15px;background:#fff;margin:1
 <div class="footer-actions"><button id="back" class="btn secondary">Retour</button><button id="next" class="btn primary">Continuer</button></div>
 </div>
 <dialog id="transactionsDialog" class="transactions-dialog"><form method="dialog"><div class="group-head"><div><div class="eyebrow">Opérations d’origine</div><h2 id="transactionsTitle">Opérations</h2><p class="muted" id="transactionsHelp"></p></div><button class="btn ghost" value="close" aria-label="Fermer">×</button></div><div id="transactionsBody"></div><div class="dialog-actions"><button class="btn secondary" value="close">Fermer</button><button class="btn secondary" type="button" id="applySelectedMedian">Utiliser la médiane</button><button class="btn secondary" type="button" id="addDetectedRecurring">+ Ajouter aux récurrents</button><button class="btn primary" type="button" id="applySelectedTransactions">Utiliser la moyenne</button></div></form></dialog>
-<script src="secure-storage.js"></script>
+<script src="secure-storage.js"></script><script src="archive.js"></script><script src="drive.js"></script>
 <script>
 const $=(s,root=document)=>root.querySelector(s), $$=(s,root=document)=>[...root.querySelectorAll(s)];
 const DATABASE='reboot-calculator-v1', STORE='reboot-site-v02';

@@ -35,9 +35,8 @@
     };
   }
 
-  async function create(passphrase, options = {}) {
-    const states = await readStates();
-    const payload = { format: 'reboot-archive-payload', version: ARCHIVE_VERSION, exportedAt: new Date().toISOString(), states };
+  async function createFromStates(states, passphrase, options = {}) {
+    const payload = { format: 'reboot-archive-payload', version: ARCHIVE_VERSION, exportedAt: new Date().toISOString(), states, ...(options.sync ? { sync: options.sync } : {}) };
     if (options.encrypted === false) return JSON.stringify({ format: PLAIN_ARCHIVE_FORMAT, version: ARCHIVE_VERSION, createdAt: payload.exportedAt, payload }, null, 2);
     if (typeof passphrase !== 'string' || passphrase.length < 16) throw new Error('Le code de chiffrement doit contenir au moins 16 caractères.');
     const salt = crypto.getRandomValues(new Uint8Array(16));
@@ -46,6 +45,8 @@
     const ciphertext = await crypto.subtle.encrypt({ name: 'AES-GCM', iv, additionalData: AAD }, key, encoder.encode(JSON.stringify(payload)));
     return JSON.stringify({ format: ARCHIVE_FORMAT, version: ARCHIVE_VERSION, createdAt: payload.exportedAt, kdf: { name: 'PBKDF2', hash: 'SHA-256', iterations: KDF_ITERATIONS, salt: toBase64(salt) }, cipher: { name: 'AES-GCM', iv: toBase64(iv), ciphertext: toBase64(ciphertext) } }, null, 2);
   }
+
+  async function create(passphrase, options = {}) { return createFromStates(await readStates(), passphrase, options); }
 
   async function open(text, passphrase) {
     let archive;
@@ -98,5 +99,5 @@
     return groups.join('-');
   }
 
-  window.RebootArchive = { create, open, restore, readStates, noteBackup, recoveryCode };
+  window.RebootArchive = { create, createFromStates, open, restore, readStates, noteBackup, recoveryCode };
 })();

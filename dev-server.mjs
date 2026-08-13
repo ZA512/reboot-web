@@ -5,6 +5,7 @@ import { extname, normalize, resolve, sep } from 'node:path';
 const host = '127.0.0.1';
 const port = Number(process.env.PORT || 4173);
 const webRoot = resolve('web');
+const brokerUrl = String(process.env.OAUTH_BROKER_URL || '').replace(/\/$/, '');
 const mimeTypes = {
   '.css': 'text/css; charset=utf-8',
   '.html': 'text/html; charset=utf-8',
@@ -23,12 +24,34 @@ function send(response, status, body, contentType = 'text/plain; charset=utf-8')
 }
 
 createServer(async (request, response) => {
+  const requestUrl = new URL(request.url, `http://${request.headers.host}`);
+  if (requestUrl.pathname.startsWith('/api/')) {
+    if (!brokerUrl) {
+      send(response, 503, JSON.stringify({ error: 'broker_unavailable', category: 'temporary', message: 'Le broker OAuth de développement n’est pas démarré.' }), 'application/json; charset=utf-8');
+      return;
+    }
+    try {
+      const chunks = [];
+      for await (const chunk of request) chunks.push(chunk);
+      const headers = { ...request.headers };
+      delete headers.host;
+      const upstream = await fetch(`${brokerUrl}${request.url}`, { method: request.method, headers, body: chunks.length ? Buffer.concat(chunks) : undefined, redirect: 'manual' });
+      const responseHeaders = Object.fromEntries(upstream.headers.entries());
+      const setCookies = upstream.headers.getSetCookie?.() || [];
+      if (setCookies.length) responseHeaders['set-cookie'] = setCookies;
+      response.writeHead(upstream.status, responseHeaders);
+      response.end(Buffer.from(await upstream.arrayBuffer()));
+    } catch {
+      send(response, 503, JSON.stringify({ error: 'broker_unavailable', category: 'temporary', message: 'Le broker OAuth de développement est inaccessible.' }), 'application/json; charset=utf-8');
+    }
+    return;
+  }
   if (request.method !== 'GET' && request.method !== 'HEAD') {
     send(response, 405, 'Method not allowed');
     return;
   }
 
-  const pathname = decodeURIComponent(new URL(request.url, `http://${request.headers.host}`).pathname);
+  const pathname = decodeURIComponent(requestUrl.pathname);
   const relativePath = pathname === '/' ? 'index.html' : normalize(pathname).replace(/^[/\\]+/, '');
   const filePath = resolve(webRoot, relativePath);
 

@@ -13,7 +13,7 @@
 <body>
   <header class="reboot-nav"><a class="reboot-nav-brand" href="app.html"><span class="reboot-nav-mark">R</span><span><strong>REBOOT</strong><small>Le budget du foyer, sans détour</small></span></a><nav class="reboot-nav-links" aria-label="Navigation principale"><a class="reboot-nav-link" href="app.html">Suivi</a><a class="reboot-nav-link" href="calculateur.html">Préparer le budget</a><a class="reboot-nav-link reboot-nav-link--verify" href="verifier.html">Vérifier</a><details class="reboot-nav-more"><summary>Plus</summary><div class="reboot-nav-menu"><a href="sauvegarde.html">Sauvegardes</a><a href="drive.html">Google Drive</a><a href="historique.html" aria-current="page">Historique</a><a href="index.html">La méthode</a></div></details></nav></header>
   <main class="shell"><p class="kicker">Traçabilité locale</p><h1>Journal des modifications</h1><p class="lead">Les créations, corrections, suppressions et clôtures sont conservées ici. Vos mouvements restent disponibles dans l’APP.</p><div class="toolbar"><span class="count" id="count"></span><button class="button" id="clear" type="button">Effacer le journal affiché</button></div><section class="list" id="list" aria-live="polite"></section></main>
-  <script src="secure-storage.js"></script>
+  <script src="secure-storage.js"></script><script src="archive.js"></script><script src="drive.js"></script>
   <script>
     const DB='reboot-local-v1',STORE='reboot-local-v1',list=document.querySelector('#list'),count=document.querySelector('#count');let state={};
     const esc=value=>String(value??'').replace(/[&<>"']/g,char=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[char]));

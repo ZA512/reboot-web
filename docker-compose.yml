@@ -7,6 +7,27 @@ services:
       - "8080:80"
     restart: unless-stopped
 
+  oauth-broker:
+    profiles: [oauth]
+    build:
+      context: ./broker
+      dockerfile: Dockerfile
+    environment:
+      NODE_ENV: production
+      BROKER_PORT: 3000
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
+      GOOGLE_REDIRECT_URI: ${GOOGLE_REDIRECT_URI:-}
+      REBOOT_TOKEN_ENCRYPTION_KEY: ${REBOOT_TOKEN_ENCRYPTION_KEY:-}
+      SESSION_SECRET: ${SESSION_SECRET:-}
+      SYNC_LEASE_TTL_SECONDS: ${SYNC_LEASE_TTL_SECONDS:-15}
+      TOMBSTONE_RETENTION_DAYS: ${TOMBSTONE_RETENTION_DAYS:-90}
+      DATABASE_URL: /app/data/oauth.sqlite
+      ALLOWED_ORIGIN: ${ALLOWED_ORIGIN:-}
+    volumes:
+      - reboot-oauth-data:/app/data
+    restart: unless-stopped
+
   reboot-tests:
     profiles: [test]
     network_mode: host
@@ -17,3 +38,17 @@ services:
       BASE_URL: http://localhost:8080
     depends_on:
       - reboot-web
+      - oauth-broker-test
+
+  oauth-broker-test:
+    profiles: [test]
+    build:
+      context: .
+      dockerfile: Dockerfile.broker-test
+    networks:
+      default:
+        aliases:
+          - oauth-broker
+
+volumes:
+  reboot-oauth-data:

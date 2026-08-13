@@ -18,7 +18,7 @@
     <section class="verify-card" id="importCard"><p class="kicker">1. Importer</p><h2>Choisir un export bancaire</h2><div class="upload-box"><label for="csvFile">Fichier CSV bancaire</label><input id="csvFile" type="file" accept=".csv,text/csv"><span class="muted">UTF-8 et Windows-1252 ; séparateurs virgule, point-virgule, tabulation ou barre verticale.</span></div><div id="mapping" class="mapping hidden"></div><div id="preview"></div><div id="importNotice" class="notice hidden"></div><button id="importButton" class="button button-primary hidden" type="button">Importer et vérifier</button></section>
     <section class="verify-card" id="reviewCard"><p class="kicker">2. Écarts du cycle</p><h2>Ce qui mérite une décision</h2><p id="reviewLead">Importez un relevé pour comparer ses opérations avec les dépenses saisies.</p><div id="summary" class="summary hidden"></div><div id="operationList" class="operation-list"></div></section>
   </main>
-  <script src="secure-storage.js"></script>
+  <script src="secure-storage.js"></script><script src="archive.js"></script><script src="drive.js"></script>
   <script>
     const DATABASE = 'reboot-local-v1';
     const LEGACY_STORAGE_KEY = 'reboot-local-v1';
