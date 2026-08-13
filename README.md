@@ -18,7 +18,7 @@ Toutes les commandes ci-dessous sont à lancer depuis la **racine du projet** : 
 Sous Windows, par exemple :
 
 ```powershell
-cd C:\Users\m.girard\Documents\reboot-web
+cd C:\chemin\vers\reboot-web
 ```
 
 Sous Unraid/Linux, placez-vous dans le dossier du projet Compose, par exemple :
@@ -74,7 +74,7 @@ node broker/server.mjs
 Dans le second terminal :
 
 ```powershell
-cd C:\Users\m.girard\Documents\reboot-web
+cd C:\chemin\vers\reboot-web
 $env:OAUTH_BROKER_URL='http://127.0.0.1:3000'
 node dev-server.mjs
 ```
