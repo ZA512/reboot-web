@@ -13,6 +13,7 @@ async function assertContains(locator, expected) {
 
 try {
   await page.goto(`${baseUrl}/app.html`, { waitUntil: 'networkidle' });
+  if (await page.locator('body').evaluate(element => element.classList.contains('app-loading'))) throw new Error('The opening screen must disappear once the budget is ready');
   if (!(await page.evaluate(() => Boolean(window.crypto?.subtle)))) throw new Error('Web Crypto is unavailable in the Docker browser context');
   if ((await page.locator('.app-header').evaluate(element => getComputedStyle(element).display)) !== 'flex') throw new Error('The daily tracking stylesheet did not load');
   await page.locator('#welcomeDialog').waitFor({ state: 'visible' });
@@ -21,14 +22,15 @@ try {
   await page.evaluate(() => localStorage.setItem('reboot-drive-config-v2', JSON.stringify({ brokerConnected: true, syncPendingSetup: true })));
   await page.reload({ waitUntil: 'networkidle' });
   await assertContains(page.locator('#welcomeTitle'), 'Google Drive est prêt');
-  if (await page.locator('#startLocalButton').isVisible()) throw new Error('A connected empty Drive must not ask the user to choose local storage again');
-  await assertContains(page.locator('#restoreDriveOption'), 'Importer une sauvegarde locale');
+  if (await page.locator('#welcomeStorageStep').isVisible()) throw new Error('A connected empty Drive must go directly to create-or-import choices');
+  await assertContains(page.locator('#importBackupOption'), 'Importer une sauvegarde existante');
   await page.evaluate(async () => { localStorage.removeItem('reboot-drive-config-v2'); sessionStorage.removeItem('reboot-google-access-token-v1'); await RebootSecureStorage.clear('reboot-local-v1', 'reboot-local-v1'); await RebootSecureStorage.clear('reboot-calculator-v1', 'reboot-site-v02'); });
   await page.goto(`${baseUrl}/app.html`, { waitUntil: 'networkidle' });
   await page.locator('#welcomeDialog').waitFor({ state: 'visible' });
   console.log('PASS an empty Drive is presented as ready for setup, not as a synchronized budget');
 
   await page.locator('#startLocalButton').click();
+  await page.locator('#createBudgetButton').click();
   await page.waitForURL('**/calculateur.html?onboarding=1');
   const localStartSaved = await page.evaluate(async () => (await RebootSecureStorage.read('reboot-local-v1', 'reboot-local-v1'))?.onboarding?.storage === 'local');
   if (!localStartSaved) throw new Error('The selected storage location must be retained before the budget exists');
@@ -181,9 +183,11 @@ try {
   await page.evaluate(() => RebootSecureStorage.clear('reboot-local-v1', 'reboot-local-v1'));
   await page.goto(`${baseUrl}/app.html`, { waitUntil: 'networkidle' });
   await page.locator('#welcomeDialog').waitFor({ state: 'visible' });
-  if (await page.locator('#welcomeDialog .welcome-option').count() !== 3) throw new Error('New users need distinct local, Drive creation, and Drive recovery choices');
-  await assertContains(page.locator('#welcomeDialog'), 'Récupérer un budget Drive');
-  await page.goto(`${baseUrl}/restaurer.html`, { waitUntil: 'networkidle' });
+  if (await page.locator('#welcomeStorageStep .welcome-option').count() !== 2) throw new Error('New users need a clear local-versus-Drive choice first');
+  await assertContains(page.locator('#welcomeDialog'), 'Synchroniser avec Google Drive');
+  await page.locator('#startLocalButton').click();
+  await assertContains(page.locator('#welcomeSetupStep'), 'Importer une sauvegarde existante');
+  await page.goto(`${baseUrl}/restaurer.html?return=app`, { waitUntil: 'networkidle' });
   await page.locator('#archiveFile').setInputFiles(backupPath);
   await page.locator('#codeField').waitFor({ state: 'visible' });
   await page.locator('#restoreCode').fill('REBOOT-test-code-2026');
@@ -192,6 +196,7 @@ try {
   await assertContains(page.locator('#archiveSummary'), '3 réserve');
   await page.locator('#restoreAcknowledgement').check();
   await page.locator('#restoreArchive').click();
+  await page.locator('#returnToApp').waitFor({ state: 'visible' });
   await page.goto(`${baseUrl}/app.html`, { waitUntil: 'networkidle' });
   await assertContains(page.locator('#budgetTotal'), '571,15');
   console.log('PASS encrypted archive restores daily data only after confirmation');

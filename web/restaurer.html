@@ -1,3 +1,84 @@
-<!doctype html><html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#0e6f67"><title>REBOOT — Restaurer une sauvegarde</title><link rel="stylesheet" href="app-shell.css"><link rel="stylesheet" href="data-page.css"></head><body>
-<header class="reboot-nav"><a class="reboot-nav-brand" href="app.html"><span class="reboot-nav-mark">R</span><span><strong>REBOOT</strong></span></a></header><main class="shell"><a class="back" href="sauvegarde.html">← Vos données</a><p class="kicker">Restaurer une sauvegarde</p><h1>Vérifier avant de remplacer</h1><p class="lead">Le fichier est ouvert et résumé avant toute modification de cet appareil.</p><section class="card" style="margin-top:28px"><div class="field"><label for="archiveFile">Fichier de sauvegarde</label><input id="archiveFile" class="input" type="file" accept="application/json,.json"></div><div class="field hidden" id="codeField"><label for="restoreCode">Code de récupération</label><input id="restoreCode" class="input" autocomplete="current-password"><small>Cette sauvegarde est protégée.</small></div><button class="button secondary" id="checkArchive" type="button">Vérifier le fichier</button><div id="archiveSummary" class="summary hidden"></div><label id="restoreAcknowledgementRow" class="check hidden"><input id="restoreAcknowledgement" type="checkbox"><span>Je comprends que les données actuelles seront remplacées.</span></label><button class="button hidden" id="restoreArchive" type="button">Restaurer ces données</button><p id="restoreStatus" class="notice hidden"></p></section></main>
-<script src="secure-storage.js"></script><script src="archive.js"></script><script>(()=>{const $=s=>document.querySelector(s);let payload=null,raw='';$('#archiveFile').onchange=async()=>{payload=null;const file=$('#archiveFile').files[0];if(!file)return;raw=await file.text();let parsed;try{parsed=JSON.parse(raw)}catch{return status('Ce fichier n’est pas une sauvegarde REBOOT valide.',true)}const protectedMode=parsed.format==='reboot-encrypted-archive';$('#codeField').classList.toggle('hidden',!protectedMode);$('#archiveSummary').classList.add('hidden');$('#restoreArchive').classList.add('hidden');$('#restoreAcknowledgementRow').classList.add('hidden');status(protectedMode?'Sauvegarde protégée détectée : saisissez son code.':'Sauvegarde simple détectée : vous pouvez la vérifier.')};$('#checkArchive').onclick=async()=>{if(!raw)return status('Choisissez un fichier.',true);try{payload=await RebootArchive.open(raw,$('#restoreCode').value.trim());const daily=payload.states.daily||{},calculator=payload.states.calculator||{};$('#archiveSummary').innerHTML=`<strong>Sauvegarde du ${new Date(payload.exportedAt).toLocaleString('fr-FR')}.</strong><br>${(daily.expenses||[]).length} dépense(s), ${(daily.reserves||[]).length} réserve(s), ${(calculator.manualMonthly||[]).length} charge(s).`;$('#archiveSummary').classList.remove('hidden');$('#restoreAcknowledgementRow').classList.remove('hidden');$('#restoreArchive').classList.remove('hidden');status('Fichier valide. Confirmez seulement si vous souhaitez le restaurer.')}catch(error){status(error.message||'Vérification impossible.',true)}};$('#restoreArchive').onclick=async()=>{if(!payload||!$('#restoreAcknowledgement').checked)return status('Confirmez le remplacement des données.',true);try{await RebootArchive.restore(payload);status('Données restaurées. Retournez maintenant dans l’APP.')}catch(error){status(error.message||'Restauration impossible.',true)}};function status(text,warning=false){$('#restoreStatus').textContent=text;$('#restoreStatus').classList.toggle('warning',warning);$('#restoreStatus').classList.remove('hidden')}})();</script></body></html>
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#0e6f67">
+  <title>REBOOT — Restaurer une sauvegarde</title>
+  <link rel="stylesheet" href="app-shell.css">
+  <link rel="stylesheet" href="data-page.css">
+</head>
+<body>
+  <header class="reboot-nav"><a class="reboot-nav-brand" href="app.html"><span class="reboot-nav-mark">R</span><span><strong>REBOOT</strong></span></a></header>
+  <main class="shell">
+    <a class="back" id="restoreBack" href="sauvegarde.html">← Vos données</a>
+    <p class="kicker">Restaurer une sauvegarde</p>
+    <h1>Vérifier avant de remplacer</h1>
+    <p class="lead">Le fichier est ouvert et résumé avant toute modification de cet appareil.</p>
+    <section class="card" style="margin-top:28px">
+      <div class="field"><label for="archiveFile">Fichier de sauvegarde</label><input id="archiveFile" class="input" type="file" accept="application/json,.json"></div>
+      <div class="field hidden" id="codeField"><label for="restoreCode">Code de récupération</label><input id="restoreCode" class="input" autocomplete="current-password"><small>Cette sauvegarde est protégée.</small></div>
+      <button class="button secondary" id="checkArchive" type="button">Vérifier le fichier</button>
+      <div id="archiveSummary" class="summary hidden"></div>
+      <label id="restoreAcknowledgementRow" class="check hidden"><input id="restoreAcknowledgement" type="checkbox"><span>Je comprends que les données actuelles seront remplacées.</span></label>
+      <button class="button hidden" id="restoreArchive" type="button">Restaurer ces données</button>
+      <a class="button hidden" id="returnToApp" href="app.html">Ouvrir REBOOT</a>
+      <p id="restoreStatus" class="notice hidden"></p>
+    </section>
+  </main>
+  <script src="secure-storage.js"></script>
+  <script src="archive.js"></script>
+  <script>
+    (() => {
+      const $ = selector => document.querySelector(selector);
+      const returnToApp = new URLSearchParams(location.search).get('return') === 'app';
+      let payload = null, raw = '';
+      if (returnToApp) { $('#restoreBack').href = 'app.html'; $('#restoreBack').textContent = '← Retour à REBOOT'; }
+
+      $('#archiveFile').onchange = async () => {
+        payload = null;
+        const file = $('#archiveFile').files[0];
+        if (!file) return;
+        raw = await file.text();
+        let parsed;
+        try { parsed = JSON.parse(raw); } catch { return status('Ce fichier n’est pas une sauvegarde REBOOT valide.', true); }
+        const protectedMode = parsed.format === 'reboot-encrypted-archive';
+        $('#codeField').classList.toggle('hidden', !protectedMode);
+        $('#archiveSummary').classList.add('hidden');
+        $('#restoreArchive').classList.add('hidden');
+        $('#restoreAcknowledgementRow').classList.add('hidden');
+        $('#returnToApp').classList.add('hidden');
+        status(protectedMode ? 'Sauvegarde protégée détectée : saisissez son code.' : 'Sauvegarde simple détectée : vous pouvez la vérifier.');
+      };
+
+      $('#checkArchive').onclick = async () => {
+        if (!raw) return status('Choisissez un fichier.', true);
+        try {
+          payload = await RebootArchive.open(raw, $('#restoreCode').value.trim());
+          const daily = payload.states.daily || {}, calculator = payload.states.calculator || {};
+          $('#archiveSummary').innerHTML = `<strong>Sauvegarde du ${new Date(payload.exportedAt).toLocaleString('fr-FR')}.</strong><br>${(daily.expenses || []).length} dépense(s), ${(daily.reserves || []).length} réserve(s), ${(calculator.manualMonthly || []).length} charge(s).`;
+          $('#archiveSummary').classList.remove('hidden');
+          $('#restoreAcknowledgementRow').classList.remove('hidden');
+          $('#restoreArchive').classList.remove('hidden');
+          status('Fichier valide. Confirmez seulement si vous souhaitez le restaurer.');
+        } catch (error) { status(error.message || 'Vérification impossible.', true); }
+      };
+
+      $('#restoreArchive').onclick = async () => {
+        if (!payload || !$('#restoreAcknowledgement').checked) return status('Confirmez le remplacement des données.', true);
+        try {
+          await RebootArchive.restore(payload);
+          $('#returnToApp').classList.remove('hidden');
+          status(returnToApp ? 'Données restaurées. Ouvrez REBOOT : la synchronisation Drive reprendra automatiquement si elle est activée.' : 'Données restaurées. Retournez maintenant dans l’APP.');
+        } catch (error) { status(error.message || 'Restauration impossible.', true); }
+      };
+
+      function status(text, warning = false) {
+        $('#restoreStatus').textContent = text;
+        $('#restoreStatus').classList.toggle('warning', warning);
+        $('#restoreStatus').classList.remove('hidden');
+      }
+    })();
+  </script>
+</body>
+</html>

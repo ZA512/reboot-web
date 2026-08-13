@@ -1,4 +1,4 @@
-const CACHE_NAME = 'reboot-shell-v43';
+const CACHE_NAME = 'reboot-shell-v45';
 const SHELL = [
   './app.html',
   './version.txt',
