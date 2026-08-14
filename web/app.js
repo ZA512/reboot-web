@@ -211,11 +211,24 @@ async function refreshCalculatorStatus() { calculatorRefreshReason = ''; try { c
 function showSyncCompleteNotice() { let notice; try { notice = JSON.parse(sessionStorage.getItem('reboot-sync-complete') || 'null'); sessionStorage.removeItem('reboot-sync-complete'); } catch { return false; } if (!notice) return false; $('#syncCompleteMessage').textContent = notice.restored ? 'Votre budget Google a été récupéré sur cet appareil.' : notice.merged ? 'Les changements trouvés sur vos autres appareils ont été réunis.' : 'Votre copie Google est à jour.'; $('#syncCompleteDialog').showModal(); return true; }
 function finishInitialLoad() { document.body.classList.remove('app-loading'); $('#appLoading').setAttribute('aria-hidden', 'true'); }
 let welcomeStorage = '';
+function driveDate(value) { try { return new Intl.DateTimeFormat('fr-FR', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value)); } catch { return 'date inconnue'; } }
+function renderDriveDatasetChoices() {
+  const candidates = window.RebootDrive?.config?.().remoteCandidates || [];
+  $('#welcomeDatasetStep').innerHTML = candidates.map((candidate, index) => `<button class="welcome-option" type="button" data-use-drive-dataset="${escapeHtml(candidate.datasetId)}"><span class="welcome-option-mark">☁</span><span class="welcome-option-copy"><strong>Budget ${candidates.length > 1 ? index + 1 : 'REBOOT'} trouvé</strong><small>Modifié le ${escapeHtml(driveDate(candidate.modifiedTime))} · Dataset …${escapeHtml(String(candidate.datasetId).slice(-4).toUpperCase())}</small></span></button>`).join('');
+}
 function showWelcomeChoice(choice = 'storage') {
-  const setup = choice === 'local' || choice === 'drive';
+  const setup = choice === 'local' || choice === 'drive', datasets = choice === 'datasets';
   welcomeStorage = setup ? choice : '';
-  $('#welcomeStorageStep').classList.toggle('hidden', setup);
+  $('#welcomeStorageStep').classList.toggle('hidden', setup || datasets);
   $('#welcomeSetupStep').classList.toggle('hidden', !setup);
+  $('#welcomeDatasetStep').classList.toggle('hidden', !datasets);
+  if (datasets) {
+    renderDriveDatasetChoices();
+    $('#welcomeTitle').textContent = 'Un budget Google Drive a été trouvé';
+    $('#welcomeStep').textContent = (window.RebootDrive?.config?.().remoteCandidates || []).length > 1 ? 'Choisissez le budget à utiliser' : 'Votre budget est prêt à être récupéré';
+    $('#welcomeLead').textContent = 'REBOOT a uniquement lu les fichiers valides de votre espace privé Google Drive. Aucun nouveau budget ne sera créé avant votre choix.';
+    return;
+  }
   $('#welcomeBackButton').classList.toggle('hidden', choice === 'drive' && Boolean(window.RebootDrive?.config?.().syncPendingSetup));
   if (!setup) {
     $('#welcomeTitle').textContent = 'Où garder votre budget ?';
@@ -231,7 +244,7 @@ function showWelcomeChoice(choice = 'storage') {
   $('#createBudgetButton').querySelector('strong').textContent = 'Créer un nouveau budget';
   $('#createBudgetButton').querySelector('small').textContent = choice === 'drive' ? 'Il sera synchronisé automatiquement avec Google Drive.' : 'Nous vous guidons pour préparer votre budget semaine.';
 }
-function prepareWelcomeDialog() { showWelcomeChoice(window.RebootDrive?.config?.().syncPendingSetup ? 'drive' : 'storage'); }
+function prepareWelcomeDialog() { const config = window.RebootDrive?.config?.() || {}; showWelcomeChoice(config.remoteCandidates?.length ? 'datasets' : config.syncPendingSetup ? 'drive' : 'storage'); }
 async function beginOnboarding(storage) { state.onboarding = { storage, startedAt: new Date().toISOString() }; await saveState(); $('#welcomeDialog').close(); location.assign('calculateur.html?onboarding=1'); }
 
 $('#addExpenseButton').onclick = () => openExpenseDialog(); $('#emptyAddButton').onclick = () => openExpenseDialog(); $('#movementAddButton').onclick = () => openExpenseDialog(); $('#addHealthExpenseButton').onclick = () => openExpenseDialog(null, true); $('#addRefundButton').onclick = () => openRefundDialog(); $('#addHealthRefundButton').onclick = () => openRefundDialog(null, true); $('#settingsButton').onclick = openSettings; $('#addReserveButton').onclick = () => openReserveDialog(); $('#addChargeButton').onclick = () => openChargeDialog(); $('#rebalanceHealthButton').onclick = openRebalanceDialog; $('#applyRecommendedBudget').onclick = applyRecommendedBudget;
@@ -244,14 +257,15 @@ $('#startLocalButton').onclick = () => showWelcomeChoice('local');
 $('#startDriveButton').onclick = () => window.RebootDrive?.connect('/app.html');
 $('#welcomeBackButton').onclick = () => showWelcomeChoice('storage');
 $('#createBudgetButton').onclick = () => beginOnboarding(welcomeStorage || 'local');
+$('#welcomeDatasetStep').onclick = async event => { const button = event.target.closest('[data-use-drive-dataset]'); if (!button) return; button.disabled = true; try { await window.RebootDrive?.useDataset(button.dataset.useDriveDataset); } catch (error) { button.disabled = false; alert(error?.message || 'Impossible d’ouvrir ce budget Google Drive.'); } };
 window.addEventListener('hashchange', showView);
-window.addEventListener('reboot:drive-status', (event) => { driveStatus = event.detail; if (state) renderFreshness(); });
+window.addEventListener('reboot:drive-status', (event) => { driveStatus = event.detail; if (state) { renderFreshness(); if (event.detail.state === 'dataset_selection_required' && !state.configured && !state.onboarding?.storage) { prepareWelcomeDialog(); $('#welcomeDialog').showModal(); } } });
 window.addEventListener('reboot:drive-merged', async () => { state = await loadState(); state.baseWeeklyBudgetMinor ||= state.weeklyBudgetMinor || 0; ensureHealthReserve(); await refreshCalculatorStatus(); render(); if (state.configured || state.onboarding?.storage) $('#welcomeDialog').close(); });
 $('#syncNow').onclick = () => driveStatus?.state === 'reauth_required' ? window.RebootDrive?.connect('/app.html') : window.RebootDrive?.syncNow();
 
 (async function init() {
   try {
-    if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js?v=45', { updateViaCache: 'none' }).catch(() => {});
+    if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js?v=46', { updateViaCache: 'none' }).catch(() => {});
     await window.RebootDrive?.initialSync?.(); state = await loadState(); state.baseWeeklyBudgetMinor ||= state.weeklyBudgetMinor || 0; state.configured = Boolean(state.baseWeeklyBudgetMinor > 0 && state.rebootDay !== null && state.rebootDay !== undefined && state.rebootDay !== ''); const migrated = ensureHealthReserve(); if (migrated) await saveState(); await refreshCalculatorStatus(); render(); showView(); const syncShown = showSyncCompleteNotice(); prepareWelcomeDialog(); if (!state.configured && !state.onboarding?.storage && !syncShown) $('#welcomeDialog').showModal(); finishInitialLoad();
   } catch (error) { state = defaultState(); ensureHealthReserve(); storageError = error?.message || 'Coffre local indisponible'; render(); showView(); $('#welcomeDialog').showModal(); finishInitialLoad(); }
 })();

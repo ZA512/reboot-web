@@ -66,7 +66,8 @@ test('OAuth start, callback and refresh keep financial data out of the broker', 
   assert.equal(status.connected, true);
   assert.deepEqual(status.scopes.sort(), ['https://www.googleapis.com/auth/drive.appdata', 'openid']);
   assert.ok(status.csrf_token);
-  assert.match(status.dataset_id, /^[a-f\d-]{36}$/i);
+  assert.equal(status.dataset_id, null);
+  assert.equal(context.database.db.prepare('SELECT COUNT(*) AS count FROM datasets').get().count, 0);
   const tokenResponse = await fetch(`${context.base}/api/oauth/google/token`, { method: 'POST', headers: { Cookie: cookie, Origin: 'http://reboot.test', 'X-CSRF-Token': status.csrf_token } });
   const token = await tokenResponse.json();
   assert.equal(tokenResponse.status, 200);
@@ -81,12 +82,17 @@ async function leaseStatus(context, cookie) { return (await fetch(`${context.bas
 async function acquireLease(context, cookie, status, datasetId) {
   return fetch(`${context.base}/api/sync/lease`, { method: 'POST', headers: { Cookie: cookie, Origin: 'http://reboot.test', 'Content-Type': 'application/json', 'X-CSRF-Token': status.csrf_token }, body: JSON.stringify({ datasetId }) });
 }
+async function adoptDataset(context, cookie, status, datasetId) {
+  return fetch(`${context.base}/api/sync/dataset/adopt`, { method: 'POST', headers: { Cookie: cookie, Origin: 'http://reboot.test', 'Content-Type': 'application/json', 'X-CSRF-Token': status.csrf_token }, body: JSON.stringify({ datasetId }) });
+}
 
 test('a dataset lease is atomic, owner-bound and reusable after release', async () => {
   const context = await setup(), firstCookie = await connect(context), secondCookie = await connect(context);
-  const [firstStatus, secondStatus] = await Promise.all([leaseStatus(context, firstCookie), leaseStatus(context, secondCookie)]);
-  assert.equal(firstStatus.dataset_id, secondStatus.dataset_id);
-  const [first, second] = await Promise.all([acquireLease(context, firstCookie, firstStatus, firstStatus.dataset_id), acquireLease(context, secondCookie, secondStatus, secondStatus.dataset_id)]);
+  const firstStatus = await leaseStatus(context, firstCookie), datasetId = '11111111-1111-4111-8111-111111111111';
+  assert.equal((await adoptDataset(context, firstCookie, firstStatus, datasetId)).status, 200);
+  const [adoptedFirstStatus, secondStatus] = await Promise.all([leaseStatus(context, firstCookie), leaseStatus(context, secondCookie)]);
+  assert.equal(adoptedFirstStatus.dataset_id, secondStatus.dataset_id);
+  const [first, second] = await Promise.all([acquireLease(context, firstCookie, adoptedFirstStatus, adoptedFirstStatus.dataset_id), acquireLease(context, secondCookie, secondStatus, secondStatus.dataset_id)]);
   const responses = [first, second], acquired = responses.find(response => response.status === 200), busy = responses.find(response => response.status === 423);
   assert.ok(acquired);
   assert.ok(busy);
@@ -95,7 +101,7 @@ test('a dataset lease is atomic, owner-bound and reusable after release', async 
   assert.equal(busyBody.status, 'busy');
   const fraud = await fetch(`${context.base}/api/sync/lease/${lease.leaseId}`, { method: 'DELETE', headers: { Cookie: secondCookie, Origin: 'http://reboot.test', 'X-CSRF-Token': secondStatus.csrf_token } });
   assert.equal(fraud.status, 403);
-  const ownerCookie = acquired === first ? firstCookie : secondCookie, ownerStatus = acquired === first ? firstStatus : secondStatus;
+  const ownerCookie = acquired === first ? firstCookie : secondCookie, ownerStatus = acquired === first ? adoptedFirstStatus : secondStatus;
   const release = await fetch(`${context.base}/api/sync/lease/${lease.leaseId}`, { method: 'DELETE', headers: { Cookie: ownerCookie, Origin: 'http://reboot.test', 'X-CSRF-Token': ownerStatus.csrf_token } });
   assert.equal(release.status, 204);
   const retry = await acquireLease(context, secondCookie, secondStatus, secondStatus.dataset_id);
@@ -104,14 +110,29 @@ test('a dataset lease is atomic, owner-bound and reusable after release', async 
 
 test('an abandoned lease expires and its API only accepts technical identifiers', async () => {
   const context = await setup({ config: testConfig({ syncLeaseTtlMs: 5 }) }), firstCookie = await connect(context), secondCookie = await connect(context);
-  const [firstStatus, secondStatus] = await Promise.all([leaseStatus(context, firstCookie), leaseStatus(context, secondCookie)]);
-  const acquired = await acquireLease(context, firstCookie, firstStatus, firstStatus.dataset_id);
+  const firstStatus = await leaseStatus(context, firstCookie);
+  assert.equal((await adoptDataset(context, firstCookie, firstStatus, '22222222-2222-4222-8222-222222222222')).status, 200);
+  const [firstStatusAfterAdoption, secondStatus] = await Promise.all([leaseStatus(context, firstCookie), leaseStatus(context, secondCookie)]);
+  const acquired = await acquireLease(context, firstCookie, firstStatusAfterAdoption, firstStatusAfterAdoption.dataset_id);
   assert.equal(acquired.status, 200);
   const rejectedPayload = await fetch(`${context.base}/api/sync/lease`, { method: 'POST', headers: { Cookie: secondCookie, Origin: 'http://reboot.test', 'Content-Type': 'application/json', 'X-CSRF-Token': secondStatus.csrf_token }, body: JSON.stringify({ datasetId: secondStatus.dataset_id, expenses: [{ amount: 42 }] }) });
   assert.equal(rejectedPayload.status, 400);
   await new Promise(resolve => setTimeout(resolve, 10));
   const afterExpiry = await acquireLease(context, secondCookie, secondStatus, secondStatus.dataset_id);
   assert.equal(afterExpiry.status, 200);
+});
+
+test('a fresh broker can adopt a Drive dataset, but never replaces an existing association', async () => {
+  const context = await setup(), cookie = await connect(context), status = await leaseStatus(context, cookie);
+  const abc = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', xyz = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+  const adopted = await adoptDataset(context, cookie, status, abc);
+  assert.equal(adopted.status, 200);
+  assert.equal((await adopted.json()).dataset_id, abc);
+  const after = await leaseStatus(context, cookie);
+  assert.equal(after.dataset_id, abc);
+  const conflict = await adoptDataset(context, cookie, after, xyz);
+  assert.equal(conflict.status, 409);
+  assert.equal((await leaseStatus(context, cookie)).dataset_id, abc);
 });
 
 test('OAuth state is bound to the HttpOnly session and consumed once', async () => {

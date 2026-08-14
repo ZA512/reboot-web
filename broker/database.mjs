@@ -124,15 +124,20 @@ export class BrokerDatabase {
   }
   markRefreshed(id, now = Date.now()) { this.db.prepare('UPDATE google_connections SET last_refresh_at=?,updated_at=? WHERE id=?').run(now, now, id); }
   markRevoked(id, now = Date.now()) { this.db.prepare('UPDATE google_connections SET revoked_at=?,updated_at=? WHERE id=?').run(now, now, id); }
-  datasetForSession(sessionId, now = Date.now()) {
+  datasetForSession(sessionId) {
+    const session = this.db.prepare('SELECT user_id FROM sessions WHERE id=?').get(sessionId);
+    if (!session?.user_id) return null;
+    const membership = this.db.prepare('SELECT dataset_id,role FROM dataset_members WHERE user_id=? ORDER BY created_at LIMIT 1').get(session.user_id);
+    return membership ? { id: membership.dataset_id, role: membership.role } : null;
+  }
+  adoptDatasetForSession(sessionId, datasetId, now = Date.now()) {
     this.db.exec('BEGIN IMMEDIATE');
     try {
       const session = this.db.prepare('SELECT user_id FROM sessions WHERE id=?').get(sessionId);
       if (!session?.user_id) { this.db.exec('COMMIT'); return null; }
       let membership = this.db.prepare('SELECT dataset_id,role FROM dataset_members WHERE user_id=? ORDER BY created_at LIMIT 1').get(session.user_id);
       if (!membership) {
-        const datasetId = randomUUID();
-        this.db.prepare('INSERT INTO datasets(id,created_at) VALUES(?,?)').run(datasetId, now);
+        this.db.prepare('INSERT OR IGNORE INTO datasets(id,created_at) VALUES(?,?)').run(datasetId, now);
         this.db.prepare('INSERT INTO dataset_members(dataset_id,user_id,role,created_at) VALUES(?,?,?,?)').run(datasetId, session.user_id, 'owner', now);
         membership = { dataset_id: datasetId, role: 'owner' };
       }
@@ -140,6 +145,7 @@ export class BrokerDatabase {
       return { id: membership.dataset_id, role: membership.role };
     } catch (error) { this.db.exec('ROLLBACK'); throw error; }
   }
+  createDatasetForSession(sessionId, now = Date.now()) { return this.adoptDatasetForSession(sessionId, randomUUID(), now); }
   acquireLease(sessionId, datasetId, ttlMs, now = Date.now()) {
     this.db.exec('BEGIN IMMEDIATE');
     try {

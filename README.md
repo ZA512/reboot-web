@@ -164,7 +164,7 @@ curl -i https://budget.exemple.fr/api/oauth/google/status
 
 La seconde commande doit répondre `HTTP 200`. Sans session navigateur, le JSON indiquera simplement `connected: false`, ce qui est normal.
 
-La première ouverture sur un nouveau domaine crée un coffre local indépendant : les données ne migrent donc pas automatiquement entre `localhost`, l’adresse IP et le domaine final. Connectez d’abord Drive depuis l’appareil qui possède vos données actuelles ; l’application y fusionnera la copie locale avec `reboot-data.json`. Le menu **Sauvegardes** permet aussi une sauvegarde et restauration manuelles.
+La première ouverture sur un nouveau domaine crée un coffre local indépendant : `IndexedDB`, `localStorage`, le `deviceId` et le cache `driveFileId` ne migrent pas entre `localhost`, l’adresse IP et le domaine final. Après la connexion Google, REBOOT recherche toutefois les datasets valides dans `appDataFolder` : le budget Drive reste donc récupérable sans copier ces caches. Le menu **Sauvegardes** permet aussi une sauvegarde et restauration manuelles.
 
 ## Images Docker publiées par GitHub
 
@@ -207,7 +207,15 @@ Le bouton **Connecter Google Drive** démarre un Authorization Code Flow côté 
 
 Le scope demandé est `https://www.googleapis.com/auth/drive.appdata`. Le fichier `reboot-data.json` est stocké dans `appDataFolder`, dossier privé de l’application. Les téléchargements et envois ont lieu directement entre le navigateur et Google Drive : le broker ne voit jamais leur contenu. L’abstraction frontend sépare le fournisseur de jeton du fournisseur de stockage afin de pouvoir ajouter ultérieurement un fichier partagé `drive.file` pour le mode couple.
 
-Pour un même compte Google utilisé sur deux appareils, le broker attribue un identifiant de dataset opaque et protège chaque écriture Drive par un lease exclusif de courte durée. Le navigateur acquiert le lease, relit le fichier, fusionne les objets par identifiant et date de modification, écrit puis libère le lease. Si un autre appareil est déjà en cours de synchronisation, REBOOT réessaie avec un délai aléatoire ; les données restent toujours dans IndexedDB. Les suppressions quotidiennes sont conservées comme tombstones pendant 90 jours par défaut pour éviter qu’une ancienne copie ne les recrée. `SYNC_LEASE_TTL_SECONDS` et `TOMBSTONE_RETENTION_DAYS` permettent d’ajuster ces deux valeurs.
+### Identité et redécouverte du dataset
+
+`datasetId` est créé une seule fois, puis est stocké dans le payload de `reboot-data.json`. Il identifie le budget, jamais un domaine, un navigateur, un appareil, le broker ou un client OAuth. Le broker conserve seulement une association reconstructible `utilisateur Google → datasetId`, afin d’autoriser les leases ; il ne crée plus de dataset lors de la vérification de connexion.
+
+Après OAuth, le navigateur parcourt en lecture seule les fichiers `reboot-data.json` de `appDataFolder` marqués avec `appProperties.reboot=plain-archive-v1`. Chaque candidat est téléchargé puis validé (enveloppe d’archive REBOOT, version, états et `sync.datasetId` UUID). Avec un budget unique et aucune association broker, REBOOT demande confirmation avant de l’adopter. Avec plusieurs budgets — ou plusieurs copies du même dataset — il les affiche avec date de modification et suffixe d’identifiant : aucun « plus récent » n’est choisi silencieusement. Si le broker connaît déjà ABC et que Drive ne présente que XYZ, c’est un conflit explicite, sans fusion ni écriture.
+
+Cette mécanique permet de retrouver un budget après changement de domaine, de navigateur, de PC/téléphone, ou recréation du volume SQLite. Elle prépare aussi un client Android : il devra appliquer le même protocole de découverte/adoption, sans dépendre de l’URL Web. Un fichier portant simplement le bon nom, l’`appProperty` ou un UUID n’est pas une preuve cryptographique : la validation est structurelle. Une signature ou un MAC du dataset est un futur renforcement utile, à introduire avec une clé de récupération utilisateur.
+
+Pour un même compte Google utilisé sur deux appareils, le broker protège chaque écriture Drive par un lease exclusif de courte durée. Le navigateur découvre d’abord en lecture seule, acquiert ensuite le lease, relit le fichier, fusionne les objets par identifiant et date de modification, écrit puis libère le lease. Si un autre appareil est déjà en cours de synchronisation, REBOOT réessaie avec un délai aléatoire ; les données restent toujours dans IndexedDB. Les suppressions quotidiennes sont conservées comme tombstones pendant 90 jours par défaut pour éviter qu’une ancienne copie ne les recrée. `SYNC_LEASE_TTL_SECONDS` et `TOMBSTONE_RETENTION_DAYS` permettent d’ajuster ces deux valeurs.
 
 Dans Google Cloud, activez **Google Drive API**, configurez l’écran de consentement et déclarez comme URI de redirection exacte la valeur de `GOOGLE_REDIRECT_URI`, par exemple `https://budget.exemple.fr/api/oauth/google/callback`. Le `GOOGLE_CLIENT_SECRET` reste exclusivement dans l’environnement du broker.
 
@@ -215,7 +223,9 @@ Une panne du broker ou de Google produit l’état « Sync en attente » et ne b
 
 ## Données et confidentialité
 
-La logique métier s'exécute dans le navigateur. Les données sont conservées dans IndexedDB et chiffrées avec Web Crypto. Les CSV sont lus localement. Google Drive est appelé directement par le navigateur ; aucun serveur REBOOT ne reçoit de données financières. Le chiffrement du fichier Drive lui-même reste un chantier séparé, prévu par l’interface de sérialisation existante.
+La logique métier s'exécute dans le navigateur. Les données sont conservées dans IndexedDB et chiffrées avec Web Crypto. Les CSV sont lus localement. Google Drive est appelé directement par le navigateur ; aucun serveur REBOOT ne reçoit de données financières.
+
+Aujourd’hui, `reboot-data.json` est volontairement une archive `reboot-plain-archive` (`encrypted: false`) afin que les appareils puissent la synchroniser sans secret partagé. Son `payload.states` contient donc en clair les montants, libellés, transactions, réserves, réglages et le `sync.datasetId`. `appDataFolder` limite la visibilité dans l’interface Drive, mais ne chiffre pas ces données côté REBOOT. Le chantier de chiffrement Drive doit être séparé et migrer avec prudence : nouvelle enveloppe chiffrée AES-GCM dans le navigateur, clé dérivée d’un code de récupération (ou une clé de dataset partagée), métadonnées minimales non sensibles pour la découverte, compatibilité lecture des archives historiques en clair, puis opt-in de conversion après sauvegarde vérifiée. Ne pas activer ce changement automatiquement : un navigateur neuf doit pouvoir fournir son information de récupération avant de lire un dataset chiffré.
 
 ## Vérifications rapides
 

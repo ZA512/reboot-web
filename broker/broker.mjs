@@ -76,6 +76,10 @@ export function createBroker(config, options = {}) {
       const session = getSession(request), association = session && database.anyConnectionForSession(session.id);
       const authorizationIncomplete = association && !association.revoked_at && !hasDriveAppDataScope(association);
       const connection = association && !association.revoked_at && !authorizationIncomplete ? association : null;
+      // The broker is a lease/token helper, not the source of truth for a budget.
+      // A fresh broker must therefore report "no association" without creating one:
+      // the browser first discovers structurally valid datasets in Drive and may then
+      // explicitly adopt one.
       const dataset = connection ? database.datasetForSession(session.id) : null;
       return json(response, 200, { connected: Boolean(connection), reauth_required: Boolean(association?.revoked_at || authorizationIncomplete), provider: association ? 'google' : null, scopes: association ? String(association.granted_scopes).split(' ').filter(Boolean) : [], csrf_token: session?.csrfToken || null, dataset_id: dataset?.id || null, tombstone_retention_days: config.tombstoneRetentionDays }, { ...common, ...(session ? { 'Set-Cookie': sessionCookie(session, config) } : {}) });
     }
@@ -134,6 +138,34 @@ export function createBroker(config, options = {}) {
       } else database.deleteSession(session.id);
       log('oauth_disconnected');
       return json(response, 200, { disconnected: true }, { ...common, 'Set-Cookie': clearedCookie(config) });
+    }
+    if (pathname === '/api/sync/dataset/adopt' && request.method === 'POST') {
+      const session = getSession(request);
+      if (!csrfAllowed(request, session)) return json(response, session ? 403 : 401, { error: session ? 'csrf_failed' : 'session_required' }, common);
+      if (!database.connectionForSession(session.id)) return json(response, 401, { error: 'reauth_required', category: 'reauth_required' }, common);
+      let body;
+      try { body = await requestJson(request); } catch { return json(response, 400, { error: 'invalid_dataset_request' }, common); }
+      if (!body || typeof body !== 'object' || Array.isArray(body) || Object.keys(body).some(key => key !== 'datasetId')) return json(response, 400, { error: 'invalid_dataset_request' }, common);
+      const datasetId = String(body.datasetId || '');
+      if (!/^[a-f\d-]{36}$/i.test(datasetId)) return json(response, 400, { error: 'invalid_dataset_id' }, common);
+      const existing = database.datasetForSession(session.id);
+      if (existing && existing.id !== datasetId) {
+        log('dataset_adoption_conflict', { known: opaqueId(existing.id), requested: opaqueId(datasetId) });
+        return json(response, 409, { error: 'dataset_conflict', dataset_id: existing.id, message: 'Ce compte REBOOT est déjà associé à un autre budget.' }, common);
+      }
+      const dataset = database.adoptDatasetForSession(session.id, datasetId);
+      log('dataset_adopted', { dataset: opaqueId(dataset.id) });
+      return json(response, 200, { dataset_id: dataset.id, adopted: !existing }, common);
+    }
+    if (pathname === '/api/sync/dataset/create' && request.method === 'POST') {
+      const session = getSession(request);
+      if (!csrfAllowed(request, session)) return json(response, session ? 403 : 401, { error: session ? 'csrf_failed' : 'session_required' }, common);
+      if (!database.connectionForSession(session.id)) return json(response, 401, { error: 'reauth_required', category: 'reauth_required' }, common);
+      const existing = database.datasetForSession(session.id);
+      if (existing) return json(response, 200, { dataset_id: existing.id, created: false }, common);
+      const dataset = database.createDatasetForSession(session.id);
+      log('dataset_created', { dataset: opaqueId(dataset.id) });
+      return json(response, 201, { dataset_id: dataset.id, created: true }, common);
     }
     if (pathname === '/api/sync/lease' && request.method === 'POST') {
       const session = getSession(request);

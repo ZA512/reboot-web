@@ -170,6 +170,20 @@
         if (error instanceof RebootDriveError) throw error;
       }
     }
+    async datasetRequest(action, datasetId = '') {
+      const status = this.status?.csrf_token ? this.status : await this.getStatus();
+      let response;
+      try {
+        response = await fetch(`/api/sync/dataset/${action}`, { method: 'POST', credentials: 'same-origin', headers: { Accept: 'application/json', 'Content-Type': 'application/json', 'X-CSRF-Token': status.csrf_token }, ...(datasetId ? { body: JSON.stringify({ datasetId }) } : {}) });
+      } catch { throw new RebootDriveError('Le service de synchronisation est momentanément inaccessible.', 'temporary', 'broker_unavailable'); }
+      const body = await this.responseJson(response);
+      if (response.status === 409) throw new RebootDriveError(body.message || 'Ce navigateur est déjà associé à un autre budget REBOOT.', 'configuration_error', 'dataset_conflict');
+      if (!response.ok || !body.dataset_id) throw new RebootDriveError('L’association avec ce budget est indisponible.', response.status === 401 ? 'reauth_required' : 'temporary', body.error || `dataset_${response.status}`);
+      this.status = { ...status, dataset_id: body.dataset_id };
+      return this.status;
+    }
+    adoptDataset(datasetId) { return this.datasetRequest('adopt', datasetId); }
+    createDataset() { return this.datasetRequest('create'); }
   }
 
   class GoogleAppDataStorageProvider {
@@ -188,22 +202,50 @@
       }
       return response;
     }
-    async getMetadata() {
+    async getKnownMetadata() {
       const knownId = storedConfig().driveFileId;
-      if (knownId) {
-        try { return await (await this.authorizedFetch(`https://www.googleapis.com/drive/v3/files/${knownId}?fields=id,name,modifiedTime,version`)).json(); }
-        catch (error) { if (!['configuration_error'].includes(error.category)) throw error; saveConfig({ driveFileId: '' }); }
-      }
-      const query = encodeURIComponent(`name='${FILE_NAME}' and trashed=false`);
-      const response = await this.authorizedFetch(`https://www.googleapis.com/drive/v3/files?q=${query}&spaces=appDataFolder&orderBy=modifiedTime desc&pageSize=1&fields=files(id,name,modifiedTime,version)`);
-      return (await response.json()).files?.[0] || null;
+      if (!knownId) return null;
+      try { return await (await this.authorizedFetch(`https://www.googleapis.com/drive/v3/files/${knownId}?fields=id,name,createdTime,modifiedTime,version,appProperties`)).json(); }
+      catch (error) { if (!['configuration_error'].includes(error.category)) throw error; saveConfig({ driveFileId: '' }); return null; }
     }
-    async load() {
-      const file = await this.getMetadata();
-      if (!file) return null;
+    async listMetadata() {
+      const query = encodeURIComponent(`name='${FILE_NAME}' and trashed=false and appProperties has { key='reboot' and value='plain-archive-v1' }`);
+      const fields = 'nextPageToken,files(id,name,createdTime,modifiedTime,version,appProperties)';
+      const files = []; let pageToken = '';
+      do {
+        const suffix = pageToken ? `&pageToken=${encodeURIComponent(pageToken)}` : '';
+        const response = await this.authorizedFetch(`https://www.googleapis.com/drive/v3/files?q=${query}&spaces=appDataFolder&pageSize=100&orderBy=modifiedTime desc&fields=${fields}${suffix}`);
+        const page = await response.json(); files.push(...(page.files || [])); pageToken = page.nextPageToken || '';
+      } while (pageToken);
+      return files;
+    }
+    async loadFile(file) {
       const response = await this.authorizedFetch(`https://www.googleapis.com/drive/v3/files/${file.id}?alt=media`);
       const payload = await RebootArchive.open(await response.text(), '');
-      return { file, payload };
+      const sync = payload?.sync || {};
+      // schemaVersion was added after the first Drive datasets. The archive
+      // envelope already validates its own format/version, so a missing sync
+      // schema remains a supported historical dataset rather than a reason to
+      // strand it after this migration.
+      if (!payload?.states || !/^[a-f\d-]{36}$/i.test(String(sync.datasetId || '')) || (sync.schemaVersion !== undefined && (!Number.isInteger(Number(sync.schemaVersion)) || Number(sync.schemaVersion) < 1))) throw new RebootDriveError('Un fichier REBOOT trouvé sur Drive ne possède pas de métadonnées de synchronisation valides.', 'configuration_error', 'invalid_dataset');
+      return { file, payload, datasetId: sync.datasetId };
+    }
+    async discoverDatasets() {
+      const known = await this.getKnownMetadata(), listed = await this.listMetadata();
+      const files = [...new Map([...(known ? [known] : []), ...listed].map(file => [file.id, file])).values()];
+      const candidates = [], invalid = [];
+      for (const file of files) {
+        try { candidates.push(await this.loadFile(file)); }
+        catch (error) { invalid.push({ file, code: error?.code || 'invalid_dataset' }); }
+      }
+      return { candidates, invalid, filesFound: files.length };
+    }
+    async load(datasetId = '') {
+      const discovery = await this.discoverDatasets();
+      if (!discovery.candidates.length) return { remote: null, discovery };
+      const knownId = storedConfig().driveFileId;
+      const remote = datasetId ? discovery.candidates.find(candidate => candidate.datasetId === datasetId && candidate.file.id === knownId) || discovery.candidates.find(candidate => candidate.datasetId === datasetId) || null : discovery.candidates[0];
+      return { remote, discovery };
     }
     async save(snapshot, existing = null, sync = null) {
       const content = await RebootArchive.createFromStates(snapshot, '', { encrypted: false, ...(sync ? { sync } : {}) });
@@ -220,8 +262,44 @@
 
   function wait(milliseconds) { return new Promise(resolve => setTimeout(resolve, milliseconds)); }
   function retryDelay(attempt, retryAfterMs = 0) { return Math.max(retryAfterMs, 200 * (2 ** attempt)) + Math.floor(Math.random() * 180); }
+  function publicCandidate(candidate) { return { datasetId: candidate.datasetId, fileId: candidate.file.id, createdTime: candidate.file.createdTime || '', modifiedTime: candidate.file.modifiedTime || '', version: String(candidate.file.version || '') }; }
+  function rememberCandidates(candidates = []) { saveConfig({ remoteCandidates: candidates.map(publicCandidate), discoveredAt: new Date().toISOString() }); }
+  async function prepareDataset(status, rawLocalStates) {
+    const discovery = await storageProvider.discoverDatasets(), candidates = discovery.candidates;
+    rememberCandidates(candidates);
+    if (status.dataset_id) {
+      const matches = candidates.filter(candidate => candidate.datasetId === status.dataset_id), knownId = storedConfig().driveFileId;
+      const remote = matches.find(candidate => candidate.file.id === knownId) || (matches.length === 1 ? matches[0] : null);
+      if (remote) { saveConfig({ remoteCandidates: [] }); return { status, remote, discovery }; }
+      if (matches.length > 1) {
+        setStatus('dataset_selection_required', 'Plusieurs copies de ce budget REBOOT ont été trouvées sur Google Drive.');
+        return { selectionRequired: true, discovery };
+      }
+      if (candidates.length) throw new RebootDriveError('Google Drive présente un autre budget REBOOT que celui déjà associé à ce navigateur. Aucun budget n’a été fusionné.', 'configuration_error', 'dataset_conflict');
+      if (discovery.invalid.length) throw new RebootDriveError('Un fichier REBOOT trouvé sur Google Drive est invalide. REBOOT ne créera rien tant qu’il n’aura pas été vérifié.', 'configuration_error', 'invalid_dataset');
+      return { status, remote: null, discovery };
+    }
+    if (candidates.length) {
+      saveConfig({ brokerConnected: true, syncPendingSetup: false, lastSyncErrorCode: '', lastSyncErrorMessage: '', dirty: false });
+      setStatus('dataset_selection_required', candidates.length > 1 ? 'Plusieurs budgets REBOOT ont été trouvés sur Google Drive.' : 'Un budget REBOOT existant a été trouvé sur Google Drive.');
+      return { selectionRequired: true, discovery };
+    }
+    if (discovery.invalid.length || discovery.filesFound) throw new RebootDriveError('Un fichier REBOOT trouvé sur Google Drive est invalide. REBOOT ne créera rien tant qu’il n’aura pas été vérifié.', 'configuration_error', 'invalid_dataset');
+    if (!hasMeaningfulStates(rawLocalStates)) {
+      saveConfig({ brokerConnected: true, syncPendingSetup: true, lastSyncErrorCode: '', lastSyncErrorMessage: '', dirty: false });
+      return { pendingSetup: true, discovery };
+    }
+    const adoptedStatus = await tokenProvider.createDataset();
+    return { status: adoptedStatus, remote: null, discovery };
+  }
   async function synchronize(status, syncRevision) {
-    const rawLocalStates = await RebootArchive.readStates(), localStates = prepareSyncStates(rawLocalStates, deviceId()), remote = await storageProvider.load();
+    const rawLocalStates = await RebootArchive.readStates(), localStates = prepareSyncStates(rawLocalStates, deviceId());
+    // The lease is held before this second read. It prevents two devices from
+    // independently applying a merge after the read-only discovery phase.
+    const loaded = await storageProvider.load(status.dataset_id);
+    const remote = loaded.remote;
+    if (!remote && loaded.discovery?.candidates?.length) throw new RebootDriveError('Google Drive présente un autre budget REBOOT. Aucun budget n’a été fusionné.', 'configuration_error', 'dataset_conflict');
+    if (!remote && loaded.discovery?.invalid?.length) throw new RebootDriveError('Un fichier REBOOT trouvé sur Google Drive est invalide.', 'configuration_error', 'invalid_dataset');
     const remoteSync = remote?.payload?.sync || {}, datasetId = status.dataset_id;
     if (!datasetId) throw new RebootDriveError('Le jeu de données synchronisé est indisponible.', 'temporary', 'dataset_missing');
     if (remoteSync.datasetId && remoteSync.datasetId !== datasetId) throw new RebootDriveError('Ce fichier Google Drive appartient à un autre jeu de données REBOOT.', 'configuration_error', 'dataset_mismatch');
@@ -237,7 +315,7 @@
     if (localChanged) await saveStates(mergedStates);
     const file = remoteChanged ? await storageProvider.save(mergedStates, remote?.file, { datasetId, revision, schemaVersion: 3 }) : remote.file;
     const latestConfig = storedConfig(), unchangedSinceSnapshot = Number(latestConfig.localRevision || 0) === syncRevision;
-    saveConfig({ brokerConnected: true, datasetId, driveFileId: file?.id || remote?.file?.id || '', driveVersion: String(file?.version || remote?.file?.version || ''), driveRevision: revision, lastSyncAt: new Date().toISOString(), syncPendingSetup: false, lastSyncErrorCode: '', lastSyncErrorMessage: '', dirty: !unchangedSinceSnapshot, lastSyncedLocalRevision: unchangedSinceSnapshot ? syncRevision : Number(latestConfig.lastSyncedLocalRevision || 0) });
+    saveConfig({ brokerConnected: true, datasetId, driveFileId: file?.id || remote?.file?.id || '', driveVersion: String(file?.version || remote?.file?.version || ''), driveRevision: revision, lastSyncAt: new Date().toISOString(), syncPendingSetup: false, remoteCandidates: [], lastSyncErrorCode: '', lastSyncErrorMessage: '', dirty: !unchangedSinceSnapshot, lastSyncedLocalRevision: unchangedSinceSnapshot ? syncRevision : Number(latestConfig.lastSyncedLocalRevision || 0) });
     if (localChanged) window.dispatchEvent(new CustomEvent('reboot:drive-merged'));
     return { file, merged: localChanged, uploaded: remoteChanged, revision };
   }
@@ -259,9 +337,12 @@
       const status = await tokenProvider.getStatus();
       if (status.reauth_required) { setStatus('reauth_required', 'Google Drive doit être reconnecté.'); return null; }
       if (!status.connected) { saveConfig({ brokerConnected: false }); setStatus('disconnected'); return null; }
-      setStatus('syncing');
       const syncRevision = Number(storedConfig().localRevision || 0);
-      const result = await syncWithLease(status, syncRevision); setStatus('connected_idle'); return result;
+      const rawLocalStates = await RebootArchive.readStates();
+      const prepared = await prepareDataset(status, rawLocalStates);
+      if (prepared.selectionRequired || prepared.pendingSetup) { setStatus('connected_idle'); return prepared; }
+      setStatus('syncing');
+      const result = await syncWithLease(prepared.status, syncRevision); setStatus('connected_idle'); return result;
     } catch (error) {
       const category = error?.category || 'temporary';
       saveConfig({ lastSyncErrorCode: error?.code || 'sync_error', lastSyncErrorMessage: error?.message || 'Synchronisation impossible.' });
@@ -297,7 +378,14 @@
     return syncNow();
   }
   async function disconnect() { await tokenProvider.disconnect(); setStatus('disconnected'); }
+  async function useDataset(datasetId) {
+    const candidate = (storedConfig().remoteCandidates || []).find(item => item.datasetId === datasetId);
+    if (!candidate) throw new RebootDriveError('Ce budget Google Drive doit être recherché à nouveau avant utilisation.', 'configuration_error', 'dataset_not_discovered');
+    const status = await tokenProvider.adoptDataset(datasetId);
+    saveConfig({ driveFileId: candidate.fileId, datasetId, syncPendingSetup: false, remoteCandidates: [], lastSyncErrorCode: '', lastSyncErrorMessage: '' });
+    return syncNow(status);
+  }
 
   const initialSync = startAutoSync();
-  window.RebootDrive = { config, synchronize: syncNow, upload: syncNow, pull: syncNow, mergeStates, syncNow, startAutoSync, initialSync: () => initialSync, disconnect, connect: returnTo => tokenProvider.connect(returnTo), deviceId, tokenProvider, storageProvider, RebootDriveError };
+  window.RebootDrive = { config, synchronize: syncNow, upload: syncNow, pull: syncNow, mergeStates, syncNow, useDataset, startAutoSync, initialSync: () => initialSync, disconnect, connect: returnTo => tokenProvider.connect(returnTo), deviceId, tokenProvider, storageProvider, RebootDriveError };
 })();
