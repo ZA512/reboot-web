@@ -1,0 +1,12 @@
+# Local development/test override. Production deployments should use only
+# docker-compose.yml and the published GHCR images: no source tree is needed.
+services:
+  reboot-web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+
+  oauth-broker:
+    build:
+      context: ./broker
+      dockerfile: Dockerfile

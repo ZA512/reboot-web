@@ -149,7 +149,8 @@ Dans le projet Google Cloud correspondant :
 Depuis la racine du projet sur Unraid :
 
 ```bash
-docker compose --profile oauth up -d --build --force-recreate
+docker compose --profile oauth pull
+docker compose --profile oauth up -d --force-recreate
 docker compose --profile oauth ps
 ```
 
@@ -189,14 +190,14 @@ docker compose --profile oauth up -d --force-recreate
 Les tests utilisent un navigateur Playwright neuf, sans cache ni service worker persistant :
 
 ```bash
-docker compose --profile test up --build --abort-on-container-exit --exit-code-from reboot-tests
+docker compose -f docker-compose.yml -f docker-compose.local.yml --profile test up --build --abort-on-container-exit --exit-code-from reboot-tests
 ```
 
 Pour forcer une instance entièrement neuve après une modification :
 
 ```bash
-docker compose down --remove-orphans
-docker compose --profile test up --build --force-recreate --abort-on-container-exit --exit-code-from reboot-tests
+docker compose -f docker-compose.yml -f docker-compose.local.yml down --remove-orphans
+docker compose -f docker-compose.yml -f docker-compose.local.yml --profile test up --build --force-recreate --abort-on-container-exit --exit-code-from reboot-tests
 ```
 
 Ils vérifient la première configuration, les réserves annuelles et temporaires, les corrections et l'historique, le lien calculateur/suivi sans double déduction, les sauvegardes chiffrées, le réimport CSV et le contrôle bancaire local.
