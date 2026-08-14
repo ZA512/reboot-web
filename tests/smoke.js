@@ -23,6 +23,22 @@ try {
   await page.locator('#welcomeDialog').waitFor({ state: 'visible' });
   console.log('PASS first visit offers a clear starting choice');
 
+  const quickStartContext = await browser.newContext({ serviceWorkers: 'block' });
+  const quickStartPage = await quickStartContext.newPage();
+  await quickStartPage.goto(`${baseUrl}/app.html`, { waitUntil: 'networkidle' });
+  await quickStartPage.evaluate(() => RebootSecureStorage.save('reboot-local-v1', { householdName: 'Notre foyer', configured: true, baseWeeklyBudgetMinor: 60000, weeklyBudgetMinor: 60000, rebootDay: 6, expenses: [], refunds: [], reserves: [], importedBankOperations: [], auditEvents: [], backupStatus: {}, onboarding: null }));
+  await quickStartPage.route('**/api/oauth/google/status', async route => {
+    await new Promise(resolve => setTimeout(resolve, 3000));
+    await route.fulfill({ contentType: 'application/json', body: JSON.stringify({ connected: false, provider: null, scopes: [], csrf_token: null }) });
+  });
+  const quickStartAt = Date.now();
+  await quickStartPage.reload({ waitUntil: 'domcontentloaded' });
+  await quickStartPage.waitForFunction(() => !document.body.classList.contains('app-loading'), null, { timeout: 1000 });
+  if (Date.now() - quickStartAt > 1000) throw new Error('A slow Drive status response must not delay the local budget display');
+  await assertContains(quickStartPage.locator('#budgetTotal'), '600,00');
+  await quickStartContext.close();
+  console.log('PASS local budget opens immediately while Drive status is slow');
+
   await page.evaluate(() => localStorage.setItem('reboot-drive-config-v2', JSON.stringify({ brokerConnected: true, syncPendingSetup: true })));
   await page.reload({ waitUntil: 'networkidle' });
   await assertContains(page.locator('#welcomeTitle'), 'Google Drive est prêt');
