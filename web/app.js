@@ -293,7 +293,7 @@ $('#syncNow').onclick = () => driveStatus?.state === 'reauth_required' ? window.
 
 (async function init() {
   try {
-    if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js?v=46', { updateViaCache: 'none' }).catch(() => {});
+    if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js?v=47', { updateViaCache: 'none' }).catch(() => {});
     await window.RebootDrive?.initialSync?.(); state = await loadState(); state.baseWeeklyBudgetMinor ||= state.weeklyBudgetMinor || 0; state.configured = Boolean(state.baseWeeklyBudgetMinor > 0 && state.rebootDay !== null && state.rebootDay !== undefined && state.rebootDay !== ''); const migrated = ensureHealthReserve(); if (migrated) await saveState(); await refreshCalculatorStatus(); render(); showView(); const syncShown = showSyncCompleteNotice(); prepareWelcomeDialog(); if (!state.configured && !state.onboarding?.storage && !syncShown) $('#welcomeDialog').showModal(); finishInitialLoad();
   } catch (error) { state = defaultState(); ensureHealthReserve(); storageError = error?.message || 'Coffre local indisponible'; render(); showView(); $('#welcomeDialog').showModal(); finishInitialLoad(); }
 })();
