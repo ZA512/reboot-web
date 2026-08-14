@@ -170,11 +170,12 @@
         if (error instanceof RebootDriveError) throw error;
       }
     }
-    async datasetRequest(action, datasetId = '') {
+    async datasetRequest(action, datasetId = '', extra = {}) {
       const status = this.status?.csrf_token ? this.status : await this.getStatus();
       let response;
       try {
-        response = await fetch(`/api/sync/dataset/${action}`, { method: 'POST', credentials: 'same-origin', headers: { Accept: 'application/json', 'Content-Type': 'application/json', 'X-CSRF-Token': status.csrf_token }, ...(datasetId ? { body: JSON.stringify({ datasetId }) } : {}) });
+        const payload = { ...(datasetId ? { datasetId } : {}), ...extra };
+        response = await fetch(`/api/sync/dataset/${action}`, { method: 'POST', credentials: 'same-origin', headers: { Accept: 'application/json', 'Content-Type': 'application/json', 'X-CSRF-Token': status.csrf_token }, ...(Object.keys(payload).length ? { body: JSON.stringify(payload) } : {}) });
       } catch { throw new RebootDriveError('Le service de synchronisation est momentanément inaccessible.', 'temporary', 'broker_unavailable'); }
       const body = await this.responseJson(response);
       if (response.status === 409) throw new RebootDriveError(body.message || 'Ce navigateur est déjà associé à un autre budget REBOOT.', 'configuration_error', 'dataset_conflict');
@@ -184,6 +185,7 @@
     }
     adoptDataset(datasetId) { return this.datasetRequest('adopt', datasetId); }
     createDataset() { return this.datasetRequest('create'); }
+    replaceDataset(datasetId) { return this.datasetRequest('replace', datasetId, { confirmation: 'use_drive_dataset' }); }
   }
 
   class GoogleAppDataStorageProvider {
@@ -385,7 +387,14 @@
     saveConfig({ driveFileId: candidate.fileId, datasetId, syncPendingSetup: false, remoteCandidates: [], lastSyncErrorCode: '', lastSyncErrorMessage: '' });
     return syncNow(status);
   }
+  async function replaceDataset(datasetId) {
+    const candidate = (storedConfig().remoteCandidates || []).find(item => item.datasetId === datasetId);
+    if (!candidate) throw new RebootDriveError('Ce budget Google Drive doit être recherché à nouveau avant utilisation.', 'configuration_error', 'dataset_not_discovered');
+    const status = await tokenProvider.replaceDataset(datasetId);
+    saveConfig({ driveFileId: candidate.fileId, datasetId, syncPendingSetup: false, remoteCandidates: [], lastSyncErrorCode: '', lastSyncErrorMessage: '' });
+    return syncNow(status);
+  }
 
   const initialSync = startAutoSync();
-  window.RebootDrive = { config, synchronize: syncNow, upload: syncNow, pull: syncNow, mergeStates, syncNow, useDataset, startAutoSync, initialSync: () => initialSync, disconnect, connect: returnTo => tokenProvider.connect(returnTo), deviceId, tokenProvider, storageProvider, RebootDriveError };
+  window.RebootDrive = { config, synchronize: syncNow, upload: syncNow, pull: syncNow, mergeStates, syncNow, useDataset, replaceDataset, startAutoSync, initialSync: () => initialSync, disconnect, connect: returnTo => tokenProvider.connect(returnTo), deviceId, tokenProvider, storageProvider, RebootDriveError };
 })();

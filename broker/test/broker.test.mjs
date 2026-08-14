@@ -85,6 +85,9 @@ async function acquireLease(context, cookie, status, datasetId) {
 async function adoptDataset(context, cookie, status, datasetId) {
   return fetch(`${context.base}/api/sync/dataset/adopt`, { method: 'POST', headers: { Cookie: cookie, Origin: 'http://reboot.test', 'Content-Type': 'application/json', 'X-CSRF-Token': status.csrf_token }, body: JSON.stringify({ datasetId }) });
 }
+async function replaceDataset(context, cookie, status, datasetId, confirmation = 'use_drive_dataset') {
+  return fetch(`${context.base}/api/sync/dataset/replace`, { method: 'POST', headers: { Cookie: cookie, Origin: 'http://reboot.test', 'Content-Type': 'application/json', 'X-CSRF-Token': status.csrf_token }, body: JSON.stringify({ datasetId, confirmation }) });
+}
 
 test('a dataset lease is atomic, owner-bound and reusable after release', async () => {
   const context = await setup(), firstCookie = await connect(context), secondCookie = await connect(context);
@@ -133,6 +136,20 @@ test('a fresh broker can adopt a Drive dataset, but never replaces an existing a
   const conflict = await adoptDataset(context, cookie, after, xyz);
   assert.equal(conflict.status, 409);
   assert.equal((await leaseStatus(context, cookie)).dataset_id, abc);
+});
+
+test('a confirmed recovery can replace a stale broker association without deleting its history', async () => {
+  const context = await setup(), cookie = await connect(context), status = await leaseStatus(context, cookie);
+  const oldDataset = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc', driveDataset = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd';
+  assert.equal((await adoptDataset(context, cookie, status, oldDataset)).status, 200);
+  const afterAdoption = await leaseStatus(context, cookie);
+  assert.equal((await replaceDataset(context, cookie, afterAdoption, driveDataset, 'no')).status, 400);
+  const replaced = await replaceDataset(context, cookie, afterAdoption, driveDataset);
+  assert.equal(replaced.status, 200);
+  assert.deepEqual(await replaced.json(), { dataset_id: driveDataset, replaced: true });
+  assert.equal((await leaseStatus(context, cookie)).dataset_id, driveDataset);
+  assert.ok(context.database.db.prepare('SELECT id FROM datasets WHERE id=?').get(oldDataset));
+  assert.ok(context.database.db.prepare('SELECT id FROM datasets WHERE id=?').get(driveDataset));
 });
 
 test('OAuth state is bound to the HttpOnly session and consumed once', async () => {

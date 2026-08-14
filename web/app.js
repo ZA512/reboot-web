@@ -216,6 +216,18 @@ function renderDriveDatasetChoices() {
   const candidates = window.RebootDrive?.config?.().remoteCandidates || [];
   $('#welcomeDatasetStep').innerHTML = candidates.map((candidate, index) => `<button class="welcome-option" type="button" data-use-drive-dataset="${escapeHtml(candidate.datasetId)}"><span class="welcome-option-mark">☁</span><span class="welcome-option-copy"><strong>Budget ${candidates.length > 1 ? index + 1 : 'REBOOT'} trouvé</strong><small>Modifié le ${escapeHtml(driveDate(candidate.modifiedTime))} · Dataset …${escapeHtml(String(candidate.datasetId).slice(-4).toUpperCase())}</small></span></button>`).join('');
 }
+function showDatasetConflict(datasetId) {
+  const candidate = (window.RebootDrive?.config?.().remoteCandidates || []).find(item => item.datasetId === datasetId);
+  if (!candidate) return showWelcomeChoice('datasets');
+  welcomeStorage = '';
+  $('#welcomeStorageStep').classList.add('hidden');
+  $('#welcomeSetupStep').classList.add('hidden');
+  $('#welcomeDatasetStep').classList.remove('hidden');
+  $('#welcomeTitle').textContent = 'Confirmer le budget à utiliser';
+  $('#welcomeStep').textContent = 'Un ancien lien doit être remplacé';
+  $('#welcomeLead').textContent = 'REBOOT a trouvé ce budget dans Google Drive, mais le serveur possède encore une ancienne association. Aucun fichier ni montant n’a été modifié.';
+  $('#welcomeDatasetStep').innerHTML = `<div class="welcome-note"><strong>Que se passe-t-il si je continue ?</strong><p>Seul le lien technique du serveur sera mis à jour vers ce budget Google Drive. Le budget Drive ne sera pas supprimé et les autres appareils pourront toujours l’utiliser.</p><p>Si un autre appareil a des changements en attente, ouvrez-le ensuite : il retrouvera ce budget et pourra les synchroniser.</p></div><button class="welcome-option" type="button" data-replace-drive-dataset="${escapeHtml(datasetId)}"><span class="welcome-option-mark">☁</span><span class="welcome-option-copy"><strong>Utiliser ce budget Google Drive</strong><small>Modifié le ${escapeHtml(driveDate(candidate.modifiedTime))} · aucune donnée n’est supprimée.</small></span></button><button class="welcome-back" type="button" data-keep-current-dataset>Conserver l’association actuelle</button>`;
+}
 function showWelcomeChoice(choice = 'storage') {
   const setup = choice === 'local' || choice === 'drive', datasets = choice === 'datasets';
   welcomeStorage = setup ? choice : '';
@@ -257,7 +269,23 @@ $('#startLocalButton').onclick = () => showWelcomeChoice('local');
 $('#startDriveButton').onclick = () => window.RebootDrive?.connect('/app.html');
 $('#welcomeBackButton').onclick = () => showWelcomeChoice('storage');
 $('#createBudgetButton').onclick = () => beginOnboarding(welcomeStorage || 'local');
-$('#welcomeDatasetStep').onclick = async event => { const button = event.target.closest('[data-use-drive-dataset]'); if (!button) return; button.disabled = true; try { await window.RebootDrive?.useDataset(button.dataset.useDriveDataset); } catch (error) { button.disabled = false; alert(error?.message || 'Impossible d’ouvrir ce budget Google Drive.'); } };
+$('#welcomeDatasetStep').onclick = async event => {
+  if (event.target.closest('[data-keep-current-dataset]')) { $('#welcomeDialog').close(); return; }
+  const button = event.target.closest('[data-use-drive-dataset], [data-replace-drive-dataset]');
+  if (!button) return;
+  button.disabled = true;
+  try {
+    if (button.dataset.replaceDriveDataset) await window.RebootDrive?.replaceDataset(button.dataset.replaceDriveDataset);
+    else await window.RebootDrive?.useDataset(button.dataset.useDriveDataset);
+  } catch (error) {
+    button.disabled = false;
+    if (error?.code === 'dataset_conflict') showDatasetConflict(button.dataset.useDriveDataset);
+    else {
+      $('#welcomeLead').textContent = error?.message || 'Impossible d’ouvrir ce budget Google Drive.';
+      $('#welcomeLead').classList.add('welcome-error');
+    }
+  }
+};
 window.addEventListener('hashchange', showView);
 window.addEventListener('reboot:drive-status', (event) => { driveStatus = event.detail; if (state) { renderFreshness(); if (event.detail.state === 'dataset_selection_required' && !state.configured && !state.onboarding?.storage) { prepareWelcomeDialog(); $('#welcomeDialog').showModal(); } } });
 window.addEventListener('reboot:drive-merged', async () => { state = await loadState(); state.baseWeeklyBudgetMinor ||= state.weeklyBudgetMinor || 0; ensureHealthReserve(); await refreshCalculatorStatus(); render(); if (state.configured || state.onboarding?.storage) $('#welcomeDialog').close(); });

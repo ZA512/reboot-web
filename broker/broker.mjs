@@ -167,6 +167,19 @@ export function createBroker(config, options = {}) {
       log('dataset_created', { dataset: opaqueId(dataset.id) });
       return json(response, 201, { dataset_id: dataset.id, created: true }, common);
     }
+    if (pathname === '/api/sync/dataset/replace' && request.method === 'POST') {
+      const session = getSession(request);
+      if (!csrfAllowed(request, session)) return json(response, session ? 403 : 401, { error: session ? 'csrf_failed' : 'session_required' }, common);
+      if (!database.connectionForSession(session.id)) return json(response, 401, { error: 'reauth_required', category: 'reauth_required' }, common);
+      let body;
+      try { body = await requestJson(request); } catch { return json(response, 400, { error: 'invalid_dataset_request' }, common); }
+      if (!body || typeof body !== 'object' || Array.isArray(body) || Object.keys(body).some(key => !['datasetId', 'confirmation'].includes(key)) || body.confirmation !== 'use_drive_dataset') return json(response, 400, { error: 'invalid_dataset_replacement' }, common);
+      const datasetId = String(body.datasetId || '');
+      if (!/^[a-f\d-]{36}$/i.test(datasetId)) return json(response, 400, { error: 'invalid_dataset_id' }, common);
+      const dataset = database.replaceDatasetForSession(session.id, datasetId);
+      log('dataset_replaced_after_confirmation', { previous: opaqueId(dataset.previousId), dataset: opaqueId(dataset.id) });
+      return json(response, 200, { dataset_id: dataset.id, replaced: dataset.replaced }, common);
+    }
     if (pathname === '/api/sync/lease' && request.method === 'POST') {
       const session = getSession(request);
       if (!csrfAllowed(request, session)) return json(response, session ? 403 : 401, { error: session ? 'csrf_failed' : 'session_required' }, common);

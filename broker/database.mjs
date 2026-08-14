@@ -146,6 +146,22 @@ export class BrokerDatabase {
     } catch (error) { this.db.exec('ROLLBACK'); throw error; }
   }
   createDatasetForSession(sessionId, now = Date.now()) { return this.adoptDatasetForSession(sessionId, randomUUID(), now); }
+  replaceDatasetForSession(sessionId, datasetId, now = Date.now()) {
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      const session = this.db.prepare('SELECT user_id FROM sessions WHERE id=?').get(sessionId);
+      if (!session?.user_id) { this.db.exec('COMMIT'); return null; }
+      const current = this.db.prepare('SELECT dataset_id FROM dataset_members WHERE user_id=? ORDER BY created_at LIMIT 1').get(session.user_id);
+      if (current?.dataset_id === datasetId) { this.db.exec('COMMIT'); return { id: datasetId, replaced: false, previousId: datasetId }; }
+      this.db.prepare('INSERT OR IGNORE INTO datasets(id,created_at) VALUES(?,?)').run(datasetId, now);
+      // Keep the old dataset row intact: the broker has no financial data and
+      // must never erase a possible historical association during recovery.
+      this.db.prepare('DELETE FROM dataset_members WHERE user_id=?').run(session.user_id);
+      this.db.prepare('INSERT INTO dataset_members(dataset_id,user_id,role,created_at) VALUES(?,?,?,?)').run(datasetId, session.user_id, 'owner', now);
+      this.db.exec('COMMIT');
+      return { id: datasetId, replaced: true, previousId: current?.dataset_id || null };
+    } catch (error) { this.db.exec('ROLLBACK'); throw error; }
+  }
   acquireLease(sessionId, datasetId, ttlMs, now = Date.now()) {
     this.db.exec('BEGIN IMMEDIATE');
     try {
