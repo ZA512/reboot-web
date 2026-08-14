@@ -11,6 +11,10 @@ async function assertContains(locator, expected) {
   if (!text?.includes(expected)) throw new Error(`Expected "${expected}" in "${text}"`);
 }
 
+function acceptConfirmation(page) {
+  page.once('dialog', dialog => dialog.accept());
+}
+
 try {
   await page.goto(`${baseUrl}/app.html`, { waitUntil: 'networkidle' });
   if (await page.locator('body').evaluate(element => element.classList.contains('app-loading'))) throw new Error('The opening screen must disappear once the budget is ready');
@@ -105,6 +109,10 @@ try {
   if (await page.locator('#rebalanceAmount').inputValue() !== '60.00') throw new Error('Health rebalancing must prefill the current deficit');
   await page.locator('#rebalanceDialog .close-button').click();
   await page.goto(`${baseUrl}/app.html#week`, { waitUntil: 'networkidle' });
+  page.once('dialog', dialog => dialog.dismiss());
+  await page.locator('#expenseList [data-delete]').click();
+  await assertContains(page.locator('#expenseList'), 'Test correction');
+  acceptConfirmation(page);
   await page.locator('#expenseList [data-delete]').click();
   await assertContains(page.locator('#remaining'), '571,15');
   await page.locator('#addExpenseButton').click();
@@ -113,12 +121,14 @@ try {
   await page.locator('input[name="funding"][value="annualized"]').check();
   await page.locator('#saveExpenseButton').click();
   await assertContains(page.locator('#remaining'), '571,15');
+  acceptConfirmation(page);
   await page.locator('#expenseList [data-delete]').click();
   await page.locator('#addRefundButton').click();
   await page.locator('#refundAmount').fill('15');
   await page.locator('#refundLabel').fill('Remboursement mutuelle');
   await page.locator('#refundForm button[value="default"]').click();
   await assertContains(page.locator('#remaining'), '586,15');
+  acceptConfirmation(page);
   await page.locator('#expenseList [data-delete-refund]').click();
   await assertContains(page.locator('#remaining'), '571,15');
   const auditEvents = await page.evaluate(async () => (await RebootSecureStorage.read('reboot-local-v1', 'reboot-local-v1'))?.auditEvents?.filter(event => event.entity === 'expense').length || 0);
@@ -135,6 +145,7 @@ try {
   await page.locator('#expenseLabel').fill('Historique corrigé');
   await page.locator('#saveExpenseButton').click();
   await assertContains(page.locator('#historyList'), 'Historique corrigé');
+  acceptConfirmation(page);
   await page.locator('#historyList [data-delete]').click();
   await page.goto(`${baseUrl}/app.html#reserves`, { waitUntil: 'networkidle' });
   await page.locator('[data-edit-reserve]').click();
@@ -204,6 +215,7 @@ try {
   await page.locator('#archiveSummary').waitFor({ state: 'visible' });
   await assertContains(page.locator('#archiveSummary'), '4 réserve');
   await page.locator('#restoreAcknowledgement').check();
+  acceptConfirmation(page);
   await page.locator('#restoreArchive').click();
   await page.locator('#returnToApp').waitFor({ state: 'visible' });
   await page.goto(`${baseUrl}/app.html`, { waitUntil: 'networkidle' });
@@ -284,6 +296,7 @@ try {
   await page.locator('[data-duplicate-manual="0"]').click();
   if ((await page.locator('[data-manual="1|name"]').inputValue()) !== 'Salaire 2') throw new Error('Duplicating Salary must insert Salary 2 immediately below the source');
   await page.locator('.recurring-item-wrap').nth(1).hover();
+  acceptConfirmation(page);
   await page.locator('[data-remove-manual="1"]').click();
   await page.locator('[data-manual="0|name"]').fill('Salaire de ZA152');
   await page.locator('[data-manual="0|type"]').selectOption('income');
@@ -305,7 +318,7 @@ try {
   if ((await page.locator('[data-annual="0|name"]').inputValue()) !== 'Entretien annuel de chaudière') throw new Error('Annual checklist items must be prepared in the annual-expense step');
   for (let step = 0; step < 2; step += 1) await page.locator('#next').click();
   await assertContains(page.locator('#main'), 'Crédit terminé');
-  page.once('dialog', dialog => dialog.accept());
+  acceptConfirmation(page);
   await page.locator('[data-remove-expired]').click();
   await page.waitForFunction(async () => (await RebootSecureStorage.read('reboot-calculator-v1', 'reboot-site-v02'))?.manualMonthly?.length === 3);
   const retainedRows = await page.evaluate(async () => (await RebootSecureStorage.read('reboot-calculator-v1', 'reboot-site-v02'))?.manualMonthly?.length || 0);
@@ -344,6 +357,7 @@ try {
   await page.locator('#checkArchive').click();
   await page.locator('#archiveSummary').waitFor({ state: 'visible' });
   await page.locator('#restoreAcknowledgement').check();
+  acceptConfirmation(page);
   await page.locator('#restoreArchive').click();
   const restoredCalculatorRows = await page.evaluate(async () => (await RebootSecureStorage.read('reboot-calculator-v1', 'reboot-site-v02'))?.manualMonthly?.length || 0);
   if (restoredCalculatorRows !== 3) throw new Error('Encrypted archive did not restore calculator data');
@@ -504,7 +518,7 @@ try {
   await assertContains(page.locator('#spreadLock'), 'supprimez la dépense puis recréez-la'); await page.locator('#expenseDialog .close-button').click();
   await page.locator('#addExpenseButton').click(); await page.locator('#expenseAmount').fill('180'); await page.locator('#expenseLabel').fill('Engagement dangereux'); await page.locator('input[name="spreadMode"][value="spread"]').check(); await page.locator('#spreadWeeks').selectOption('2');
   await assertContains(page.locator('#spreadPreview'), 'réservera'); await assertContains(page.locator('#saveExpenseButton'), 'Confirmer quand même'); await page.locator('#expenseDialog .close-button').click();
-  page.once('dialog', dialog => dialog.accept()); await page.locator('#expenseList article', { hasText: 'Achat étalé' }).locator('[data-delete]').click();
+  acceptConfirmation(page); await page.locator('#expenseList article', { hasText: 'Achat étalé' }).locator('[data-delete]').click();
   const deletedSpread = await page.evaluate(async () => { const saved = await RebootSecureStorage.read('reboot-local-v1', 'reboot-local-v1'), expense = saved.expenses.find(item => item.label === 'Achat étalé'); return { expenseDeleted: Boolean(expense.deletedAt), allocationsDeleted: saved.allocations.filter(item => item.transactionId === expense.id).every(item => item.deletedAt) }; });
   if (!deletedSpread.expenseDeleted || !deletedSpread.allocationsDeleted) throw new Error('Deleting a spread must tombstone its transaction and every allocation');
   console.log('PASS manual spread previews cents, affects only the current allocation, warns, locks structural edits and deletes atomically');
@@ -565,7 +579,7 @@ try {
   await page.reload({ waitUntil: 'networkidle' });
   const storedFrequencies = await page.evaluate(async () => (await RebootSecureStorage.read('reboot-calculator-v1', 'reboot-site-v02')).manualMonthly.map(entry => entry.frequency));
   if (storedFrequencies[0] !== 'monthly' || storedFrequencies[1] !== 'annual') throw new Error('Editing a recurring line must retain its original amount and selected frequency');
-  page.once('dialog', dialog => dialog.accept());
+  acceptConfirmation(page);
   await page.locator('[data-remove-charge="manual|2"]').click();
   await page.waitForFunction(() => !document.querySelector('#chargeList')?.textContent?.includes('Assurance annuelle'));
   console.log('PASS annual and monthly recurring lines retain their frequency, show their conversion and update the monthly average');

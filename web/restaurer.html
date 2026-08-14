@@ -66,6 +66,7 @@
 
       $('#restoreArchive').onclick = async () => {
         if (!payload || !$('#restoreAcknowledgement').checked) return status('Confirmez le remplacement des données.', true);
+        if (!confirm('Restaurer cette sauvegarde et remplacer les données actuellement présentes sur cet appareil ?')) return;
         try {
           await RebootArchive.restore(payload);
           $('#returnToApp').classList.remove('hidden');
