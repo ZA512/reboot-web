@@ -99,6 +99,7 @@ try {
   await assertContains(page.locator('#expenseList'), 'Santé');
   await page.goto(`${baseUrl}/app.html#reserves`, { waitUntil: 'networkidle' });
   await assertContains(page.locator('#healthCurrentBalance'), '-60,00');
+  await assertContains(page.locator('.health-help .tooltip'), 'solde estimé');
   if (await page.locator('#healthAlert').isHidden()) throw new Error('Health reserve must propose rebalancing once its deficit reaches 50 euros');
   await page.locator('#rebalanceHealthButton').click();
   if (await page.locator('#rebalanceAmount').inputValue() !== '60.00') throw new Error('Health rebalancing must prefill the current deficit');
@@ -155,11 +156,19 @@ try {
   await page.locator('#reserveTarget').fill('1000');
   await page.locator('#saveReserveButton').click();
   await page.locator('#reserveDialog').waitFor({ state: 'hidden' });
-  await assertContains(page.locator('#reserveList'), 'Projet temporaire');
+  await assertContains(page.locator('#reserveList'), 'Projet ou plaisir');
   await assertContains(page.locator('#budgetTotal'), '548,07');
   page.once('dialog', dialog => dialog.accept());
   await page.locator('[data-close-reserve]').click();
   await assertContains(page.locator('#budgetTotal'), '571,15');
+  await page.locator('#addReserveButton').click();
+  await page.locator('#reserveName').fill('Prime annuelle');
+  await page.locator('#reserveForm button[value="default"]').click();
+  await page.locator('#reserveDialog').waitFor({ state: 'hidden' });
+  await assertContains(page.locator('#reserveList'), 'Sans versement programmé');
+  await page.goto(`${baseUrl}/app.html#week`, { waitUntil: 'networkidle' });
+  await assertContains(page.locator('#weekReservesList'), 'Prime annuelle');
+  await assertContains(page.locator('#weekReservesList'), 'Santé');
   console.log('PASS expenses and reserves can be corrected without re-entry');
 
   await page.goto(`${baseUrl}/historique.html`, { waitUntil: 'networkidle' });
@@ -193,7 +202,7 @@ try {
   await page.locator('#restoreCode').fill('REBOOT-test-code-2026');
   await page.locator('#checkArchive').click();
   await page.locator('#archiveSummary').waitFor({ state: 'visible' });
-  await assertContains(page.locator('#archiveSummary'), '3 réserve');
+  await assertContains(page.locator('#archiveSummary'), '4 réserve');
   await page.locator('#restoreAcknowledgement').check();
   await page.locator('#restoreArchive').click();
   await page.locator('#returnToApp').waitFor({ state: 'visible' });
@@ -473,6 +482,42 @@ try {
   await page.goto(`${baseUrl}/app.html`, { waitUntil: 'networkidle' });
   await assertContains(page.locator('#remaining'), '302,61');
   console.log('PASS local CSV verification reconciles and adds a confirmed forgotten expense');
+
+  await page.evaluate(async () => {
+    localStorage.removeItem('reboot-drive-config-v2');
+    localStorage.removeItem('reboot-drive-config-v1');
+    await RebootSecureStorage.save('reboot-local-v1', { householdName: 'Notre foyer', configured: true, baseWeeklyBudgetMinor: 60000, weeklyBudgetMinor: 60000, rebootDay: 6, expenses: [], refunds: [], reserves: [], reserveTransfers: [], importedBankOperations: [], auditEvents: [], backupStatus: {}, onboarding: null });
+    await RebootSecureStorage.save('reboot-calculator-v1', {
+      mode: 'manual', step: 2, groups: [], annual: [], updatedAt: new Date().toISOString(), manualMonthly: [
+        { name: 'Amazon Prime', type: 'charge', amount: 70, frequency: 'annual', endsOn: '', templateKey: 'charge|ABONNEMENT NUMERIQUE' },
+        { name: 'Spotify', type: 'charge', amount: 21, frequency: 'monthly', endsOn: '', templateKey: 'charge|ABONNEMENT NUMERIQUE' },
+        { name: 'Assurance annuelle', type: 'charge', amount: 120, frequency: 'annual', endsOn: '', templateKey: 'charge|ASSURANCE' },
+        { name: 'Prime annuelle', type: 'income', amount: 1200, frequency: 'annual', endsOn: '', templateKey: 'income|PRIME' }
+      ]
+    });
+  });
+  await page.goto(`${baseUrl}/app.html?test=annual-frequency#charges`, { waitUntil: 'networkidle' });
+  const recurringLines = (await page.locator('#chargeList').innerText()).replace(/\s/g, ' ');
+  await assertContains(page.locator('#chargeList'), 'Abonnement Numerique');
+  await assertContains(page.locator('#chargeList'), 'Assurance');
+  for (const value of ['5,83 € / mois', '70,00 € / an', '21,00 € / mois', '252,00 € / an']) if (!recurringLines.includes(value)) throw new Error(`Unexpected recurring amount display: ${value}; actual: ${recurringLines}`);
+  await assertContains(page.locator('#monthlyChargesTotal'), '36,83');
+  await assertContains(page.locator('#monthlyIncomeTotal'), '100,00');
+  await page.locator('[data-edit-charge="manual|0"]').click();
+  await page.locator('#chargeFrequency').selectOption('monthly');
+  await assertContains(page.locator('#chargeFrequencyEquivalent'), '840,00');
+  await page.locator('#chargeForm button[value="default"]').click();
+  await page.locator('[data-edit-charge="manual|1"]').click();
+  await page.locator('#chargeFrequency').selectOption('annual');
+  await assertContains(page.locator('#chargeFrequencyEquivalent'), '1,75');
+  await page.locator('#chargeForm button[value="default"]').click();
+  await page.reload({ waitUntil: 'networkidle' });
+  const storedFrequencies = await page.evaluate(async () => (await RebootSecureStorage.read('reboot-calculator-v1', 'reboot-site-v02')).manualMonthly.map(entry => entry.frequency));
+  if (storedFrequencies[0] !== 'monthly' || storedFrequencies[1] !== 'annual') throw new Error('Editing a recurring line must retain its original amount and selected frequency');
+  page.once('dialog', dialog => dialog.accept());
+  await page.locator('[data-remove-charge="manual|2"]').click();
+  await page.waitForFunction(() => !document.querySelector('#chargeList')?.textContent?.includes('Assurance annuelle'));
+  console.log('PASS annual and monthly recurring lines retain their frequency, show their conversion and update the monthly average');
 } finally {
   await browser.close();
 }
