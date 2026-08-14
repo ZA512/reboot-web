@@ -16,9 +16,10 @@ let editingRefundId = null;
 let editingReserveId = null;
 let editingCharge = null;
 let movementFilter = 'all';
+let trackingWeeks = 52;
 let driveStatus = null;
 
-const defaultState = () => ({ householdName: 'Notre foyer', configured: false, baseWeeklyBudgetMinor: 0, weeklyBudgetMinor: 0, rebootDay: null, expenses: [], refunds: [], reserves: [], reserveTransfers: [], importedBankOperations: [], auditEvents: [], backupStatus: {}, onboarding: null });
+const defaultState = () => ({ householdName: 'Notre foyer', configured: false, baseWeeklyBudgetMinor: 0, weeklyBudgetMinor: 0, rebootDay: null, expenses: [], refunds: [], reserves: [], reserveTransfers: [], importedBankOperations: [], weeklyCycles: [], allocations: [], auditEvents: [], backupStatus: {}, onboarding: null });
 const createId = () => crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
 const snapshot = value => JSON.parse(JSON.stringify(value));
 const escapeHtml = value => String(value ?? '').replace(/[&<>"']/g, character => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' }[character]));
@@ -28,7 +29,7 @@ const formatMoney = minor => currency.format((Number(minor) || 0) / 100);
 const eurosToMinor = value => { const normalized = String(value ?? '').trim().replace(',', '.'); if (!normalized || !/^\d+(\.\d{1,2})?$/.test(normalized)) return 0; const [euros, cents = ''] = normalized.split('.'); return Number(euros) * 100 + Number((cents + '00').slice(0, 2)); };
 
 function ensureHealthReserve() {
-  state.expenses ||= []; state.refunds ||= []; state.reserves ||= []; state.reserveTransfers ||= []; state.auditEvents ||= []; state.backupStatus ||= {};
+  state.expenses ||= []; state.refunds ||= []; state.reserves ||= []; state.reserveTransfers ||= []; state.weeklyCycles ||= []; state.allocations ||= []; state.auditEvents ||= []; state.backupStatus ||= {};
   let health = state.reserves.find(reserve => reserve.kind === 'health');
   if (!health) {
     health = { id: createId(), name: 'Santé', kind: 'health', initialBalanceMinor: 0, openedOn: dateKey(new Date()), real: false, includedInCalculatorBudget: true, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
@@ -39,8 +40,51 @@ function ensureHealthReserve() {
 }
 
 async function loadState() { const stored = await RebootSecureStorage.read(DATABASE_NAME, LEGACY_STORAGE_KEY); return { ...defaultState(), ...(stored || {}) }; }
-function saveState() { state.updatedAt = new Date().toISOString(); saveQueue = saveQueue.then(() => RebootSecureStorage.save(DATABASE_NAME, state)).catch(error => { storageError = error?.message || 'Stockage indisponible'; renderFreshness(); }); return saveQueue; }
+function saveState() { synchronizeWeeklyModel(); state.updatedAt = new Date().toISOString(); saveQueue = saveQueue.then(() => RebootSecureStorage.save(DATABASE_NAME, state)).catch(error => { storageError = error?.message || 'Stockage indisponible'; renderFreshness(); }); return saveQueue; }
 function recordEvent(type, entity, entityId, before = null, after = null) { state.auditEvents.push({ id: createId(), type, entity, entityId, at: new Date().toISOString(), before: before ? snapshot(before) : null, after: after ? snapshot(after) : null }); }
+
+function createWeeklyCycle(startDate, budgetMinor = null, status = 'planned') {
+  const now = new Date().toISOString();
+  return { id: RebootBudgetEngine.cycleIdForStart(startDate), startDate, endDate: RebootBudgetEngine.addDays(startDate, 6), budgetMinor, status, isExceptional: false, createdAt: now, updatedAt: now };
+}
+function allocationCycleStart(date) { return RebootBudgetEngine.cycleStartForDate(date, state.rebootDay); }
+function ensureCycle(startDate, budgetMinor = null, status = 'planned') {
+  let cycle = state.weeklyCycles.find(item => item.id === RebootBudgetEngine.cycleIdForStart(startDate) && !item.deletedAt);
+  if (!cycle) { cycle = createWeeklyCycle(startDate, budgetMinor, status); state.weeklyCycles.push(cycle); }
+  return cycle;
+}
+function synchronizeWeeklyModel() {
+  state.weeklyCycles ||= []; state.allocations ||= [];
+  if (!state.configured || state.rebootDay === null || state.rebootDay === undefined) return;
+  const now = new Date().toISOString(), currentStart = allocationCycleStart(dateKey(new Date())), currentBudget = effectiveWeeklyBudgetMinor();
+  for (const cycle of state.weeklyCycles.filter(item => !item.deletedAt)) {
+    if (cycle.startDate < currentStart && cycle.status !== 'closed') { cycle.status = 'closed'; cycle.closedAt = now; cycle.updatedAt = now; }
+    if (cycle.startDate > currentStart && cycle.status !== 'planned') { cycle.status = 'planned'; cycle.updatedAt = now; }
+  }
+  const current = ensureCycle(currentStart, currentBudget, 'open');
+  if (current.status !== 'open' || current.budgetMinor !== currentBudget) Object.assign(current, { status: 'open', budgetMinor: currentBudget, openedAt: current.openedAt || now, updatedAt: now });
+  const historicalAnchor = state.weeklyCycles.filter(item => !item.deletedAt && item.startDate < currentStart && item.budgetMinor !== null && item.budgetMinor !== undefined && Number.isFinite(Number(item.budgetMinor))).sort((a, b) => b.startDate.localeCompare(a.startDate))[0];
+  if (historicalAnchor) { for (let start = RebootBudgetEngine.addDays(historicalAnchor.startDate, 7); start < currentStart; start = RebootBudgetEngine.addDays(start, 7)) { const cycle = ensureCycle(start, historicalAnchor.budgetMinor, 'closed'); if (!cycle.closedAt) Object.assign(cycle, { status: 'closed', closedAt: now, updatedAt: now }); } }
+  for (const expense of state.expenses.filter(item => item.funding === 'weekly' && !item.deletedAt)) {
+    if (state.allocations.some(item => item.transactionId === expense.id && !item.deletedAt)) continue;
+    const cycleStart = allocationCycleStart(expense.date);
+    const status = cycleStart < currentStart ? 'closed' : cycleStart === currentStart ? 'open' : 'planned';
+    const budget = cycleStart < currentStart ? null : currentBudget;
+    const cycle = ensureCycle(cycleStart, budget, status);
+    state.allocations.push({ id: createId(), transactionId: expense.id, cycleId: cycle.id, cycleStart, amountMinor: expense.amountMinor, sequence: 1, sequenceCount: 1, createdAt: expense.createdAt || now, updatedAt: now });
+  }
+  for (const allocation of state.allocations.filter(item => !item.deletedAt)) {
+    const status = allocation.cycleStart < currentStart ? 'closed' : allocation.cycleStart === currentStart ? 'open' : 'planned';
+    ensureCycle(allocation.cycleStart, allocation.cycleStart < currentStart ? null : currentBudget, status);
+  }
+}
+function activeAllocations(transactionId = '') { return state.allocations.filter(item => !item.deletedAt && (!transactionId || item.transactionId === transactionId)); }
+function createAllocations(expense, weeks = 1, startMode = 'current') {
+  const currentStart = allocationCycleStart(dateKey(new Date()));
+  const firstStart = startMode === 'next' ? RebootBudgetEngine.addDays(currentStart, 7) : currentStart;
+  const amounts = RebootBudgetEngine.splitAmountMinor(expense.amountMinor, weeks), now = new Date().toISOString();
+  return amounts.map((amountMinor, index) => { const cycleStart = RebootBudgetEngine.addDays(firstStart, index * 7), cycle = ensureCycle(cycleStart, effectiveWeeklyBudgetMinor(), cycleStart === currentStart ? 'open' : 'planned'); return { id: createId(), transactionId: expense.id, cycleId: cycle.id, cycleStart, amountMinor, sequence: index + 1, sequenceCount: weeks, createdAt: now, updatedAt: now }; });
+}
 
 function startOfCycle(today = new Date()) { if (state.rebootDay === null || state.rebootDay === undefined || !state.configured) return null; const start = new Date(today.getFullYear(), today.getMonth(), today.getDate()); start.setDate(start.getDate() - (start.getDay() - Number(state.rebootDay) + 7) % 7); return start; }
 function reserveDeductionMinor() { return state.reserves.filter(reserve => reserve.kind !== 'health' && !reserve.closedAt && !reserve.includedInCalculatorBudget).reduce((sum, reserve) => sum + Math.ceil((reserve.annualTargetMinor || 0) / 52), 0); }
@@ -50,13 +94,14 @@ function cycleInfo() {
   if (!start) return { configured: false, start: null, end: null, daysLeft: null, spentMinor: 0, refundMinor: 0, budgetMinor: 0, remainingMinor: null };
   const end = new Date(start); end.setDate(end.getDate() + 6);
   const startKey = dateKey(start), endKey = dateKey(end), today = new Date();
-  const weeklyExpenses = state.expenses.filter(expense => expense.funding === 'weekly' && !expense.deletedAt && expense.date >= startKey && expense.date <= endKey);
+  const currentCycle = state.weeklyCycles.find(item => item.startDate === startKey && !item.deletedAt);
+  const weeklyAllocations = activeAllocations().filter(allocation => allocation.cycleStart === startKey && !state.expenses.find(expense => expense.id === allocation.transactionId)?.deletedAt);
   const weeklyTransfers = state.reserveTransfers.filter(transfer => transfer.sourceType === 'weekly' && !transfer.deletedAt && transfer.date >= startKey && transfer.date <= endKey);
-  const spentMinor = weeklyExpenses.reduce((sum, expense) => sum + expense.amountMinor, 0) + weeklyTransfers.reduce((sum, transfer) => sum + transfer.amountMinor, 0);
+  const spentMinor = weeklyAllocations.reduce((sum, allocation) => sum + allocation.amountMinor, 0) + weeklyTransfers.reduce((sum, transfer) => sum + transfer.amountMinor, 0);
   const refundMinor = state.refunds.filter(refund => refund.applyToBudget && !refund.health && !refund.deletedAt && refund.date >= startKey && refund.date <= endKey).reduce((sum, refund) => sum + refund.amountMinor, 0);
   const daysLeft = Math.max(1, Math.ceil((new Date(end.getFullYear(), end.getMonth(), end.getDate() + 1) - new Date(today.getFullYear(), today.getMonth(), today.getDate())) / 86400000));
-  const budgetMinor = effectiveWeeklyBudgetMinor();
-  return { configured: true, start, end, daysLeft, spentMinor, refundMinor, budgetMinor, remainingMinor: budgetMinor - spentMinor + refundMinor };
+  const budgetMinor = currentCycle?.budgetMinor ?? effectiveWeeklyBudgetMinor();
+  return { configured: true, entity: currentCycle, start, end, daysLeft, spentMinor, refundMinor, budgetMinor, remainingMinor: budgetMinor - spentMinor + refundMinor };
 }
 
 function monthsSince(value, today = new Date()) { const opened = new Date(`${value}T12:00:00`); let months = (today.getFullYear() - opened.getFullYear()) * 12 + today.getMonth() - opened.getMonth(); if (today.getDate() < opened.getDate()) months -= 1; return Math.max(0, months); }
@@ -110,7 +155,38 @@ function renderWeek() {
     $('#remaining').textContent = formatMoney(cycle.remainingMinor); $('#remaining').classList.toggle('negative', cycle.remainingMinor < 0); $('#budgetTotal').textContent = formatMoney(cycle.budgetMinor); $('#cycleDates').textContent = `${shortDate(dateKey(cycle.start))} → ${shortDate(dateKey(cycle.end))}`; $('#daysLeft').textContent = cycle.daysLeft === 1 ? 'jusqu’à demain' : `${cycle.daysLeft} jours restants`; $('#dailyGuide').textContent = `${formatMoney(Math.max(0, cycle.remainingMinor) / cycle.daysLeft)} / jour`; $('#balanceTrack').style.width = `${cycle.budgetMinor ? Math.min(100, Math.max(0, (cycle.spentMinor - cycle.refundMinor) / cycle.budgetMinor * 100)) : 0}%`;
     const deduction = reserveDeductionMinor(); $('#reserveDeduction').classList.toggle('hidden', !deduction); $('#reserveDeduction').textContent = deduction ? `Réserves : − ${formatMoney(deduction)} / semaine` : '';
   }
-  renderSignal(cycle); renderCurrentExpenses(cycle); renderHealth(); renderWeekReserves(); renderFreshness();
+  renderSignal(cycle); renderCurrentExpenses(cycle); renderHealth(); renderWeekReserves(); renderFutureCommitments(); renderFreshness();
+}
+
+function cycleCommittedMinor(cycleStart, extras = [], excludeTransactionId = '') {
+  const allocations = [...activeAllocations(), ...extras].filter(item => item.cycleStart === cycleStart && item.transactionId !== excludeTransactionId && !state.expenses.find(expense => expense.id === item.transactionId)?.deletedAt);
+  return allocations.reduce((sum, item) => sum + Number(item.amountMinor || 0), 0);
+}
+function renderFutureCommitments() {
+  const card = $('#futureCommitments'); if (!card || !state.configured) { card?.classList.add('hidden'); return; }
+  const currentStart = allocationCycleStart(dateKey(new Date())), grouped = new Map();
+  activeAllocations().filter(item => item.cycleStart > currentStart && !state.expenses.find(expense => expense.id === item.transactionId)?.deletedAt).forEach(item => grouped.set(item.cycleStart, (grouped.get(item.cycleStart) || 0) + item.amountMinor));
+  const rows = [...grouped.entries()].sort(([a], [b]) => a.localeCompare(b)).slice(0, 6);
+  card.classList.toggle('hidden', !rows.length);
+  $('#futureCommitmentList').innerHTML = rows.map(([start, amount]) => { const cycle = state.weeklyCycles.find(item => item.startDate === start && !item.deletedAt), projected = Number(cycle?.budgetMinor ?? effectiveWeeklyBudgetMinor()) - amount; return `<div class="future-row"><span>Semaine du ${shortDate(start)}</span><span class="future-values"><strong>${formatMoney(amount)} engagés</strong><small>reste ${formatMoney(projected)}</small></span></div>`; }).join('');
+}
+
+function closedCycleResult(cycle) {
+  const allocated = cycleCommittedMinor(cycle.startDate);
+  const transfers = state.reserveTransfers.filter(item => item.sourceType === 'weekly' && !item.deletedAt && item.date >= cycle.startDate && item.date <= cycle.endDate).reduce((sum, item) => sum + item.amountMinor, 0);
+  const refunds = state.refunds.filter(item => item.applyToBudget && !item.health && !item.deletedAt && item.date >= cycle.startDate && item.date <= cycle.endDate).reduce((sum, item) => sum + item.amountMinor, 0);
+  const spentMinor = allocated + transfers - refunds;
+  return { ...cycle, spentMinor, resultMinor: Number(cycle.budgetMinor) - spentMinor };
+}
+function renderTracking() {
+  const currentStart = state.configured ? allocationCycleStart(dateKey(new Date())) : '';
+  const rows = state.weeklyCycles.filter(cycle => !cycle.deletedAt && cycle.status === 'closed' && cycle.startDate < currentStart && cycle.budgetMinor !== null && cycle.budgetMinor !== undefined && Number.isFinite(Number(cycle.budgetMinor))).sort((a, b) => b.startDate.localeCompare(a.startDate)).slice(0, trackingWeeks).map(closedCycleResult);
+  const gains = rows.filter(row => row.resultMinor >= 0).reduce((sum, row) => sum + row.resultMinor, 0), overages = rows.filter(row => row.resultMinor < 0).reduce((sum, row) => sum + Math.abs(row.resultMinor), 0), net = gains - overages;
+  $('#trackingNet').textContent = `${net >= 0 ? '+' : '−'} ${formatMoney(Math.abs(net))}`; $('#trackingNet').classList.toggle('negative', net < 0);
+  $('#trackingGains').textContent = `+ ${formatMoney(gains)}`; $('#trackingOverages').textContent = `− ${formatMoney(overages)}`;
+  $('#trackingAvailable').textContent = rows.length < trackingWeeks ? `${rows.length} semaine${rows.length > 1 ? 's' : ''} disponible${rows.length > 1 ? 's' : ''}` : '';
+  $('#trackingList').innerHTML = rows.length ? `<div class="tracking-head"><span>Semaine</span><span>Budget</span><span>Dépensé</span><span>Écart</span></div>${rows.map(row => `<article class="tracking-row"><span>${shortDate(row.startDate)} → ${shortDate(row.endDate)}</span><span>${formatMoney(row.budgetMinor)}</span><span>${formatMoney(row.spentMinor)}</span><strong class="${row.resultMinor < 0 ? 'negative' : 'positive'}">${row.resultMinor >= 0 ? 'Gain +' : 'Dépassement −'} ${formatMoney(Math.abs(row.resultMinor))}</strong></article>`).join('')}` : '';
+  $('#trackingEmpty').classList.toggle('hidden', Boolean(rows.length));
 }
 
 function renderSignal(cycle) {
@@ -128,7 +204,8 @@ function entryHtml(entry) {
   }
   const fundingLabel = entry.health ? 'Réserve Santé' : entry.funding === 'weekly' ? 'Semaine' : entry.funding === 'reserve' ? `Réserve · ${escapeHtml(entry.reserveName || '')}` : entry.funding === 'annualized' ? 'Déjà prévue' : 'Transfert';
   const nature = ({ necessary: 'Nécessaire', pleasure: 'Plaisir', postponable: 'Reportable', unexpected: 'Imprévu' })[entry.nature] || '';
-  return `<article class="expense-item ${entry.health ? 'health' : entry.funding}"><div class="expense-symbol">−</div><div><div class="expense-label">${escapeHtml(entry.label)}</div><div class="expense-meta">${shortDate(entry.date)} · ${fundingLabel}${nature ? ` · ${nature}` : ''}</div></div><div class="expense-amount">− ${formatMoney(entry.amountMinor)}</div><div class="expense-actions"><button class="delete-expense" data-edit-expense="${entry.id}">Modifier</button><button class="delete-expense" data-delete="${entry.id}">Supprimer</button></div></article>`;
+  const allocationCount = activeAllocations(entry.id).length, spreadLabel = allocationCount > 1 ? ` · étalée sur ${allocationCount} semaines` : '';
+  return `<article class="expense-item ${entry.health ? 'health' : entry.funding}"><div class="expense-symbol">−</div><div><div class="expense-label">${escapeHtml(entry.label)}</div><div class="expense-meta">${shortDate(entry.date)} · ${fundingLabel}${spreadLabel}${nature ? ` · ${nature}` : ''}</div></div><div class="expense-amount">− ${formatMoney(entry.amountMinor)}</div><div class="expense-actions"><button class="delete-expense" data-edit-expense="${entry.id}">Modifier</button><button class="delete-expense" data-delete="${entry.id}">Supprimer</button></div></article>`;
 }
 function allEntries() { return [...state.expenses.filter(item => !item.deletedAt).map(item => ({ ...item, entryType: 'expense' })), ...state.refunds.filter(item => !item.deletedAt).map(item => ({ ...item, entryType: 'refund' }))].sort((a, b) => `${b.date}${b.createdAt}`.localeCompare(`${a.date}${a.createdAt}`)); }
 function bindEntryActions(root = document) { root.querySelectorAll('[data-edit-expense]').forEach(button => button.onclick = () => openExpenseDialog(state.expenses.find(item => item.id === button.dataset.editExpense))); root.querySelectorAll('[data-delete]').forEach(button => button.onclick = () => deleteExpense(button.dataset.delete)); root.querySelectorAll('[data-edit-refund]').forEach(button => button.onclick = () => openRefundDialog(state.refunds.find(item => item.id === button.dataset.editRefund))); root.querySelectorAll('[data-delete-refund]').forEach(button => button.onclick = () => deleteRefund(button.dataset.deleteRefund)); }
@@ -206,15 +283,45 @@ function renderCharges() {
 }
 async function saveCalculator() { if (!calculatorState) calculatorState = { mode: 'manual', step: 0, manualMonthly: [], annual: [], groups: [], updatedAt: '' }; calculatorState.updatedAt = new Date().toISOString(); await RebootSecureStorage.save(CALCULATOR_DATABASE, calculatorState); calculatorRefreshReason = 'changed'; renderCharges(); renderSignal(cycleInfo()); }
 
-function render() { renderWeek(); renderMovements(); renderReserves(); renderCharges(); updateSettingsFields(); }
-function showView() { const requested = location.hash.replace('#', '') || 'week', view = ['week', 'movements', 'charges', 'reserves'].includes(requested) ? requested : 'week'; $$('[data-view-panel]').forEach(panel => panel.classList.toggle('hidden', panel.dataset.viewPanel !== view)); $$('[data-view]').forEach(link => link.setAttribute('aria-current', link.dataset.view === view ? 'page' : 'false')); document.title = `REBOOT — ${{ week: 'Semaine', movements: 'Mouvements', charges: 'Charges', reserves: 'Réserves' }[view]}`; if (view === 'charges') renderCharges(); if (view === 'movements') renderMovements(); window.scrollTo({ top: 0, behavior: 'instant' }); }
+function render() { renderWeek(); renderMovements(); renderReserves(); renderCharges(); renderTracking(); updateSettingsFields(); }
+function showView() { const requested = location.hash.replace('#', '') || 'week', view = ['week', 'movements', 'charges', 'reserves', 'tracking'].includes(requested) ? requested : 'week'; $$('[data-view-panel]').forEach(panel => panel.classList.toggle('hidden', panel.dataset.viewPanel !== view)); $$('[data-view]').forEach(link => link.setAttribute('aria-current', link.dataset.view === view ? 'page' : 'false')); document.title = `REBOOT — ${{ week: 'Semaine', movements: 'Mouvements', charges: 'Charges', reserves: 'Réserves', tracking: 'Suivi' }[view]}`; if (view === 'charges') renderCharges(); if (view === 'movements') renderMovements(); if (view === 'tracking') renderTracking(); window.scrollTo({ top: 0, behavior: 'instant' }); }
 
-function openExpenseDialog(expense = null, health = false) { editingExpenseId = expense?.id || null; $('#expenseForm').reset(); populateReserveOptions(); renderRecentLabels(); const isHealth = Boolean(expense?.health || health); $('#expenseHealth').checked = isHealth; $('#fundingField').classList.toggle('hidden', isHealth); $('#expenseDialogKicker').textContent = expense ? 'Correction' : isHealth ? 'Réserve Santé' : 'Nouvelle dépense'; $('#expenseDialogTitle').textContent = expense ? 'Modifier le montant' : isHealth ? 'Ajouter une dépense Santé' : 'Ajouter un montant'; $('#saveExpenseButton').textContent = expense ? 'Enregistrer les modifications' : 'Enregistrer'; $('#expenseDate').value = expense?.date || dateKey(new Date()); if (expense) { $('#expenseAmount').value = (expense.amountMinor / 100).toFixed(2); $('#expenseLabel').value = expense.label; const funding = document.querySelector(`input[name="funding"][value="${expense.funding}"]`); if (funding) funding.checked = true; $('#expenseReserve').value = expense.reserveId || ''; const nature = document.querySelector(`input[name="nature"][value="${expense.nature || ''}"]`); if (nature) nature.checked = true; } toggleReserveChoice(); $('#expenseDialog').showModal(); $('#expenseAmount').focus(); }
+function openExpenseDialog(expense = null, health = false) {
+  editingExpenseId = expense?.id || null; $('#expenseForm').reset(); populateReserveOptions(); renderRecentLabels();
+  const allocations = expense ? activeAllocations(expense.id).sort((a, b) => a.sequence - b.sequence) : [], lockedSpread = allocations.length > 1, isHealth = Boolean(expense?.health || health);
+  $('#expenseHealth').checked = isHealth; $('#fundingField').classList.toggle('hidden', isHealth); $('#expenseDialogKicker').textContent = expense ? 'Correction' : isHealth ? 'Réserve Santé' : 'Nouvelle dépense'; $('#expenseDialogTitle').textContent = expense ? 'Modifier le montant' : isHealth ? 'Ajouter une dépense Santé' : 'Ajouter un montant'; $('#saveExpenseButton').textContent = expense ? 'Enregistrer les modifications' : 'Enregistrer'; $('#expenseDate').value = expense?.date || dateKey(new Date());
+  if (expense) { $('#expenseAmount').value = (expense.amountMinor / 100).toFixed(2); $('#expenseLabel').value = expense.label; const funding = document.querySelector(`input[name="funding"][value="${expense.funding}"]`); if (funding) funding.checked = true; $('#expenseReserve').value = expense.reserveId || ''; const nature = document.querySelector(`input[name="nature"][value="${expense.nature || ''}"]`); if (nature) nature.checked = true; }
+  document.querySelector(`input[name="spreadMode"][value="${lockedSpread ? 'spread' : 'once'}"]`).checked = true;
+  if (lockedSpread) { $('#spreadWeeks').value = String(allocations.length); const currentStart = allocationCycleStart(dateKey(new Date())); $('#spreadStart').value = allocations[0].cycleStart > currentStart ? 'next' : 'current'; }
+  ['expenseAmount', 'expenseDate', 'expenseHealth'].forEach(id => { $(`#${id}`).disabled = lockedSpread; }); $$('input[name="funding"], input[name="spreadMode"]').forEach(input => { input.disabled = lockedSpread; }); $('#spreadWeeks').disabled = lockedSpread; $('#spreadStart').disabled = lockedSpread; $('#spreadLock').classList.toggle('hidden', !lockedSpread);
+  toggleReserveChoice(); updateSpreadControls(); $('#expenseDialog').showModal(); (lockedSpread ? $('#expenseLabel') : $('#expenseAmount')).focus();
+}
 function populateReserveOptions() { const reserves = state.reserves.filter(reserve => reserve.kind !== 'health' && !reserve.closedAt); $('#expenseReserve').innerHTML = reserves.map(reserve => `<option value="${reserve.id}">${escapeHtml(reserve.name)} · ${formatMoney(reserveBalance(reserve))}</option>`).join('') || '<option value="">Aucune réserve</option>'; $('#reserveFundingChoice').classList.toggle('hidden', !reserves.length); }
-function toggleReserveChoice() { const health = $('#expenseHealth').checked; $('#fundingField').classList.toggle('hidden', health); $('#reserveChoice').classList.toggle('hidden', health || document.querySelector('input[name="funding"]:checked')?.value !== 'reserve'); }
+function toggleReserveChoice() { const health = $('#expenseHealth').checked; $('#fundingField').classList.toggle('hidden', health); $('#reserveChoice').classList.toggle('hidden', health || document.querySelector('input[name="funding"]:checked')?.value !== 'reserve'); updateSpreadControls(); }
 function renderRecentLabels() { const labels = [...new Set(state.expenses.filter(item => !item.deletedAt).sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt))).map(item => item.label).filter(Boolean))].slice(0, 4); $('#recentLabels').innerHTML = labels.map(label => `<button class="recent-label" type="button" data-label="${escapeHtml(label)}">${escapeHtml(label)}</button>`).join(''); $('#recentLabels').querySelectorAll('[data-label]').forEach(button => button.onclick = () => { $('#expenseLabel').value = button.dataset.label; }); }
-async function saveExpense(event) { if (event.submitter?.value === 'cancel') return; event.preventDefault(); const form = new FormData($('#expenseForm')), amountMinor = eurosToMinor(form.get('amount')), label = String(form.get('label') || '').trim(); if (!amountMinor || !label) return; const health = form.get('health') === 'on', funding = health ? 'health' : String(form.get('funding') || 'weekly'), reserve = state.reserves.find(item => item.id === form.get('reserve')); if (funding === 'reserve' && !reserve) return; const existing = editingExpenseId ? state.expenses.find(item => item.id === editingExpenseId) : null; const expense = { id: existing?.id || createId(), date: String(form.get('date') || dateKey(new Date())), createdAt: existing?.createdAt || new Date().toISOString(), updatedAt: new Date().toISOString(), amountMinor, label, funding, reserveId: reserve?.id || '', reserveName: reserve?.name || '', nature: String(form.get('nature') || ''), health }; if (existing) { const before = snapshot(existing); Object.assign(existing, expense); recordEvent('updated', 'expense', existing.id, before, existing); } else { state.expenses.push(expense); recordEvent('created', 'expense', expense.id, null, expense); } await saveState(); $('#expenseDialog').close(); render(); }
-function deleteExpense(id) { const expense = state.expenses.find(item => item.id === id); if (!expense) return; const before = snapshot(expense); expense.deletedAt = new Date().toISOString(); recordEvent('deleted', 'expense', id, before, expense); saveState(); render(); }
+function spreadDraft() {
+  const amountMinor = eurosToMinor($('#expenseAmount').value), weeks = Number($('#spreadWeeks').value || 2), startMode = $('#spreadStart').value, currentStart = allocationCycleStart(dateKey(new Date())), firstStart = startMode === 'next' ? RebootBudgetEngine.addDays(currentStart, 7) : currentStart;
+  return RebootBudgetEngine.splitAmountMinor(amountMinor, weeks).map((part, index) => ({ transactionId: 'draft', cycleStart: RebootBudgetEngine.addDays(firstStart, index * 7), amountMinor: part }));
+}
+function updateSpreadControls() {
+  if (!state) return; const health = $('#expenseHealth').checked, weekly = document.querySelector('input[name="funding"]:checked')?.value === 'weekly', spread = document.querySelector('input[name="spreadMode"]:checked')?.value === 'spread', locked = Boolean(editingExpenseId && activeAllocations(editingExpenseId).length > 1);
+  $('#spreadField').classList.toggle('hidden', health || !weekly); $('#spreadControls').classList.toggle('hidden', !spread); $('#spreadPreview').classList.toggle('hidden', !spread);
+  if (health || !weekly || !spread) { if (!locked) $('#saveExpenseButton').textContent = editingExpenseId ? 'Enregistrer les modifications' : 'Enregistrer'; return; }
+  const draft = spreadDraft(), currentStart = allocationCycleStart(dateKey(new Date())), budget = effectiveWeeklyBudgetMinor(); let warning = null;
+  const rows = draft.map(item => { const total = cycleCommittedMinor(item.cycleStart, draft, editingExpenseId || ''), projected = budget - total; if (!warning && item.cycleStart > currentStart && (total > budget * .5 || projected < 0)) warning = { start: item.cycleStart, total, projected }; return `<li><span>Semaine du ${shortDate(item.cycleStart)}</span><strong>${formatMoney(item.amountMinor)}</strong></li>`; }).join(''), dangerous = Boolean(warning);
+  $('#spreadPreview').innerHTML = `<strong>${formatMoney(draft.reduce((sum, item) => sum + item.amountMinor, 0))} répartis exactement</strong><ul>${rows}</ul>${warning ? `<div class="spread-warning"><p>Cette dépense réservera ${formatMoney(warning.total)} sur le budget de ${formatMoney(budget)} de la semaine du ${shortDate(warning.start)}. Il restera ${formatMoney(warning.projected)} avant les autres dépenses.</p><button type="button" data-edit-spread>Modifier l’étalement</button></div>` : ''}`;
+  $('#spreadPreview').querySelector('[data-edit-spread]')?.addEventListener('click', () => $('#spreadWeeks').focus());
+  if (!locked) $('#saveExpenseButton').textContent = dangerous ? 'Confirmer quand même' : editingExpenseId ? 'Enregistrer les modifications' : 'Enregistrer';
+}
+async function saveExpense(event) {
+  if (event.submitter?.value === 'cancel') return; event.preventDefault(); const form = new FormData($('#expenseForm')), label = String(form.get('label') || '').trim(), existing = editingExpenseId ? state.expenses.find(item => item.id === editingExpenseId) : null, existingAllocations = existing ? activeAllocations(existing.id) : [], lockedSpread = existingAllocations.length > 1, amountMinor = lockedSpread ? existing.amountMinor : eurosToMinor(form.get('amount')); if (!amountMinor || !label) return;
+  const health = lockedSpread ? existing.health : form.get('health') === 'on', funding = lockedSpread ? existing.funding : health ? 'health' : String(form.get('funding') || 'weekly'), reserve = state.reserves.find(item => item.id === form.get('reserve')); if (funding === 'reserve' && !reserve && !lockedSpread) return;
+  const expense = lockedSpread ? { ...existing, label, nature: String(form.get('nature') || ''), updatedAt: new Date().toISOString() } : { id: existing?.id || createId(), date: String(form.get('date') || dateKey(new Date())), createdAt: existing?.createdAt || new Date().toISOString(), updatedAt: new Date().toISOString(), amountMinor, label, funding, reserveId: reserve?.id || '', reserveName: reserve?.name || '', nature: String(form.get('nature') || ''), health };
+  if (existing) { const before = snapshot(existing); Object.assign(existing, expense); if (!lockedSpread) { const deletedAt = new Date().toISOString(), spread = form.get('spreadMode') === 'spread'; existingAllocations.forEach(item => { item.deletedAt = deletedAt; item.updatedAt = deletedAt; }); if (expense.funding === 'weekly') state.allocations.push(...createAllocations(expense, spread ? Number(form.get('spreadWeeks')) : 1, spread ? String(form.get('spreadStart')) : 'current')); } recordEvent('updated', 'expense', existing.id, before, existing); }
+  else { state.expenses.push(expense); if (expense.funding === 'weekly') { const spread = form.get('spreadMode') === 'spread'; state.allocations.push(...createAllocations(expense, spread ? Number(form.get('spreadWeeks')) : 1, spread ? String(form.get('spreadStart')) : 'current')); } recordEvent('created', 'expense', expense.id, null, expense); }
+  await saveState(); $('#expenseDialog').close(); render();
+}
+function deleteExpense(id) { const expense = state.expenses.find(item => item.id === id); if (!expense) return; const allocations = activeAllocations(id); if (allocations.length > 1 && !confirm(`Supprimer cette dépense et ses ${allocations.length} affectations hebdomadaires ?`)) return; const before = snapshot(expense), deletedAt = new Date().toISOString(); expense.deletedAt = deletedAt; expense.updatedAt = deletedAt; allocations.forEach(item => { item.deletedAt = deletedAt; item.updatedAt = deletedAt; }); recordEvent('deleted', 'expense', id, before, expense); saveState(); render(); }
 
 function openRefundDialog(refund = null, health = false) { editingRefundId = refund?.id || null; $('#refundForm').reset(); $('#refundDate').value = refund?.date || dateKey(new Date()); const expenses = state.expenses.filter(item => !item.deletedAt); $('#refundExpense').innerHTML = `<option value="">Aucune dépense précise</option>${expenses.map(expense => `<option value="${expense.id}">${escapeHtml(expense.label)} · ${formatMoney(expense.amountMinor)}</option>`).join('')}`; const isHealth = Boolean(refund ? isHealthRefund(refund) : health); $('#refundHealth').checked = isHealth; $('#refundApply').checked = refund ? Boolean(refund.applyToBudget) : !isHealth; $('#refundApplyField').classList.toggle('hidden', isHealth); if (refund) { $('#refundAmount').value = (refund.amountMinor / 100).toFixed(2); $('#refundLabel').value = refund.label; $('#refundExpense').value = refund.expenseId || ''; } $('#refundDialog').showModal(); $('#refundAmount').focus(); }
 async function saveRefund(event) { if (event.submitter?.value === 'cancel') return; event.preventDefault(); const form = new FormData($('#refundForm')), amountMinor = eurosToMinor(form.get('amount')), label = String(form.get('label') || '').trim(); if (!amountMinor || !label) return; const expenseId = String(form.get('expense') || ''), linked = state.expenses.find(item => item.id === expenseId), health = form.get('health') === 'on' || Boolean(linked?.health), existing = editingRefundId ? state.refunds.find(item => item.id === editingRefundId) : null; const refund = { id: existing?.id || createId(), date: String(form.get('date') || dateKey(new Date())), createdAt: existing?.createdAt || new Date().toISOString(), updatedAt: new Date().toISOString(), amountMinor, label, expenseId, health, applyToBudget: health ? false : form.get('apply') === 'on' }; if (existing) { const before = snapshot(existing); Object.assign(existing, refund); recordEvent('updated', 'refund', existing.id, before, existing); } else { state.refunds.push(refund); recordEvent('created', 'refund', refund.id, null, refund); } await saveState(); $('#refundDialog').close(); render(); }
@@ -327,8 +434,10 @@ $('#addExpenseButton').onclick = () => openExpenseDialog(); $('#emptyAddButton')
 $('#expenseForm').onsubmit = saveExpense; $('#refundForm').onsubmit = saveRefund; $('#reserveForm').onsubmit = saveReserve; $('#chargeForm').onsubmit = saveCharge; $('#rebalanceForm').onsubmit = saveRebalance; $('#settingsForm').onsubmit = saveSettings;
 $('#chargeAmount').oninput = updateChargeFrequencyControls; $('#chargeFrequency').onchange = updateChargeFrequencyControls; $('#chargeType').onchange = updateChargeFrequencyControls;
 $$('input[name="funding"]').forEach(input => input.onchange = toggleReserveChoice); $('#expenseHealth').onchange = toggleReserveChoice; $('#refundHealth').onchange = () => { const health = $('#refundHealth').checked; $('#refundApplyField').classList.toggle('hidden', health); if (health) $('#refundApply').checked = false; }; $('#refundExpense').onchange = () => { const expense = state.expenses.find(item => item.id === $('#refundExpense').value); if (expense?.health) { $('#refundHealth').checked = true; $('#refundHealth').dispatchEvent(new Event('change')); } };
+$$('input[name="spreadMode"]').forEach(input => input.onchange = updateSpreadControls); $('#spreadWeeks').onchange = updateSpreadControls; $('#spreadStart').onchange = updateSpreadControls; $('#expenseAmount').oninput = updateSpreadControls;
 ['reserveMonthly', 'reserveTarget', 'reserveReal'].forEach(id => $(`#${id}`).oninput = updateReservePreview); $$('input[name="reserveKind"]').forEach(input => input.onchange = updateReservePreview);
 $('#movementSearch').oninput = renderMovements; $$('[data-movement-filter]').forEach(button => button.onclick = () => { movementFilter = button.dataset.movementFilter; $$('[data-movement-filter]').forEach(item => item.setAttribute('aria-pressed', item === button ? 'true' : 'false')); renderMovements(); });
+$$('[data-tracking-weeks]').forEach(button => button.onclick = () => { trackingWeeks = Number(button.dataset.trackingWeeks); $$('[data-tracking-weeks]').forEach(item => item.setAttribute('aria-pressed', item === button ? 'true' : 'false')); renderTracking(); });
 $$('[data-reserve-suggestion]').forEach(button => button.onclick = () => openReserveDialog(null, button.dataset.reserveSuggestion));
 $('#startLocalButton').onclick = () => showWelcomeChoice('local');
 $('#startDriveButton').onclick = () => window.RebootDrive?.connect('/app.html');
@@ -353,12 +462,12 @@ $('#welcomeDatasetStep').onclick = async event => {
 };
 window.addEventListener('hashchange', showView);
 window.addEventListener('reboot:drive-status', (event) => { driveStatus = event.detail; if (state) { renderFreshness(); if (event.detail.state === 'dataset_selection_required' && !state.configured && !state.onboarding?.storage) { prepareWelcomeDialog(); $('#welcomeDialog').showModal(); } } });
-window.addEventListener('reboot:drive-merged', async () => { state = await loadState(); state.baseWeeklyBudgetMinor ||= state.weeklyBudgetMinor || 0; ensureHealthReserve(); await refreshCalculatorStatus(); render(); if (state.configured || state.onboarding?.storage) $('#welcomeDialog').close(); });
+window.addEventListener('reboot:drive-merged', async () => { state = await loadState(); state.baseWeeklyBudgetMinor ||= state.weeklyBudgetMinor || 0; ensureHealthReserve(); synchronizeWeeklyModel(); await refreshCalculatorStatus(); render(); if (state.configured || state.onboarding?.storage) $('#welcomeDialog').close(); });
 $('#syncNow').onclick = () => driveStatus?.state === 'reauth_required' ? window.RebootDrive?.connect('/app.html') : window.RebootDrive?.syncNow();
 
 (async function init() {
   try {
-    if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js?v=47', { updateViaCache: 'none' }).catch(() => {});
-    await window.RebootDrive?.initialSync?.(); state = await loadState(); state.baseWeeklyBudgetMinor ||= state.weeklyBudgetMinor || 0; state.configured = Boolean(state.baseWeeklyBudgetMinor > 0 && state.rebootDay !== null && state.rebootDay !== undefined && state.rebootDay !== ''); const migrated = ensureHealthReserve(); if (migrated) await saveState(); await refreshCalculatorStatus(); render(); showView(); const syncShown = showSyncCompleteNotice(); prepareWelcomeDialog(); if (!state.configured && !state.onboarding?.storage && !syncShown) $('#welcomeDialog').showModal(); finishInitialLoad();
+    if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js?v=48', { updateViaCache: 'none' }).catch(() => {});
+    await window.RebootDrive?.initialSync?.(); state = await loadState(); state.baseWeeklyBudgetMinor ||= state.weeklyBudgetMinor || 0; state.configured = Boolean(state.baseWeeklyBudgetMinor > 0 && state.rebootDay !== null && state.rebootDay !== undefined && state.rebootDay !== ''); const beforeWeeklyModel = JSON.stringify([state.weeklyCycles || [], state.allocations || []]), migrated = ensureHealthReserve(); synchronizeWeeklyModel(); if (migrated || beforeWeeklyModel !== JSON.stringify([state.weeklyCycles, state.allocations])) await saveState(); await refreshCalculatorStatus(); render(); showView(); const syncShown = showSyncCompleteNotice(); prepareWelcomeDialog(); if (!state.configured && !state.onboarding?.storage && !syncShown) $('#welcomeDialog').showModal(); finishInitialLoad();
   } catch (error) { state = defaultState(); ensureHealthReserve(); storageError = error?.message || 'Coffre local indisponible'; render(); showView(); $('#welcomeDialog').showModal(); finishInitialLoad(); }
 })();

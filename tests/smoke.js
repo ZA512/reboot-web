@@ -236,10 +236,10 @@ try {
   });
   if (plainArchive.archive.format !== 'reboot-plain-archive' || !plainArchive.payload.states) throw new Error('Simple Drive mode must create a readable archive');
   const mergedStates = await page.evaluate(() => RebootDrive.mergeStates(
-    { daily: { updatedAt: '2026-08-01T10:00:00.000Z', expenses: [{ id: 'shared', amountMinor: 100, updatedAt: '2026-08-01T10:00:00.000Z' }], reserves: [{ id: 'local', name: 'Canapé', updatedAt: '2026-08-01T10:00:00.000Z' }] }, calculator: { updatedAt: '2026-08-01T10:00:00.000Z', manualMonthly: [{ name: 'Local' }] } },
-    { daily: { updatedAt: '2026-08-02T10:00:00.000Z', expenses: [{ id: 'shared', amountMinor: 200, updatedAt: '2026-08-02T10:00:00.000Z' }, { id: 'remote', amountMinor: 300, updatedAt: '2026-08-02T10:00:00.000Z' }], refunds: [{ id: 'refund', amountMinor: 50, createdAt: '2026-08-02T10:00:00.000Z' }] }, calculator: { updatedAt: '2026-08-02T10:00:00.000Z', manualMonthly: [{ name: 'Distant' }] } }
+    { daily: { updatedAt: '2026-08-01T10:00:00.000Z', expenses: [{ id: 'shared', amountMinor: 100, updatedAt: '2026-08-01T10:00:00.000Z' }], reserves: [{ id: 'local', name: 'Canapé', updatedAt: '2026-08-01T10:00:00.000Z' }], allocations: [{ id: 'allocation-local', transactionId: 'shared', amountMinor: 100, updatedAt: '2026-08-01T10:00:00.000Z' }] }, calculator: { updatedAt: '2026-08-01T10:00:00.000Z', manualMonthly: [{ name: 'Local' }] } },
+    { daily: { updatedAt: '2026-08-02T10:00:00.000Z', expenses: [{ id: 'shared', amountMinor: 200, updatedAt: '2026-08-02T10:00:00.000Z' }, { id: 'remote', amountMinor: 300, updatedAt: '2026-08-02T10:00:00.000Z' }], refunds: [{ id: 'refund', amountMinor: 50, createdAt: '2026-08-02T10:00:00.000Z' }], weeklyCycles: [{ id: 'cycle-2026-08-01', startDate: '2026-08-01', budgetMinor: 60000, updatedAt: '2026-08-02T10:00:00.000Z' }] }, calculator: { updatedAt: '2026-08-02T10:00:00.000Z', manualMonthly: [{ name: 'Distant' }] } }
   ));
-  if (mergedStates.daily.expenses.length !== 2 || mergedStates.daily.expenses.find(expense => expense.id === 'shared')?.amountMinor !== 200 || mergedStates.daily.reserves.length !== 1 || mergedStates.daily.refunds.length !== 1 || mergedStates.calculator.manualMonthly[0].name !== 'Distant') throw new Error('Multi-device state merge must preserve independent entries and newest edits');
+  if (mergedStates.daily.expenses.length !== 2 || mergedStates.daily.expenses.find(expense => expense.id === 'shared')?.amountMinor !== 200 || mergedStates.daily.reserves.length !== 1 || mergedStates.daily.refunds.length !== 1 || mergedStates.daily.allocations.length !== 1 || mergedStates.daily.weeklyCycles.length !== 1 || mergedStates.calculator.manualMonthly[0].name !== 'Distant') throw new Error('Multi-device state merge must preserve independent entries, allocations, cycles and newest edits');
   const protectedStates = await page.evaluate(() => RebootDrive.mergeStates(
     { daily: { updatedAt: '2026-08-01T10:00:00.000Z', configured: true, householdName: 'Notre foyer', baseWeeklyBudgetMinor: 50000, weeklyBudgetMinor: 50000, rebootDay: 1 }, calculator: { updatedAt: '2026-08-01T10:00:00.000Z', manualMonthly: [{ name: 'Internet', amount: 30 }] } },
     { daily: { updatedAt: '2026-08-13T10:00:00.000Z', configured: false, householdName: 'Notre foyer', reserves: [{ kind: 'health', name: 'Santé', initialBalanceMinor: 0 }] }, calculator: { updatedAt: '2026-08-13T10:00:00.000Z', manualMonthly: [] } }
@@ -482,6 +482,57 @@ try {
   await page.goto(`${baseUrl}/app.html`, { waitUntil: 'networkidle' });
   await assertContains(page.locator('#remaining'), '302,61');
   console.log('PASS local CSV verification reconciles and adds a confirmed forgotten expense');
+
+  const engineSplits = await page.evaluate(() => ({ exact: RebootBudgetEngine.splitAmountMinor(30000, 3), remainder: RebootBudgetEngine.splitAmountMinor(2800, 3) }));
+  if (engineSplits.exact.join(',') !== '10000,10000,10000' || engineSplits.remainder.join(',') !== '933,933,934') throw new Error(`Weekly split must preserve every cent: ${JSON.stringify(engineSplits)}`);
+  console.log('PASS weekly allocation engine preserves exact totals and assigns the remainder to the final week');
+
+  await page.evaluate(async () => {
+    const now = new Date(), currentDay = now.getDay();
+    await RebootSecureStorage.save('reboot-local-v1', { householdName: 'Notre foyer', configured: true, baseWeeklyBudgetMinor: 10000, weeklyBudgetMinor: 10000, rebootDay: currentDay, expenses: [], refunds: [], reserves: [], reserveTransfers: [], importedBankOperations: [], weeklyCycles: [], allocations: [], auditEvents: [], backupStatus: {}, onboarding: null });
+  });
+  await page.reload({ waitUntil: 'networkidle' });
+  await page.locator('#addExpenseButton').click();
+  await page.locator('#expenseAmount').fill('28'); await page.locator('#expenseLabel').fill('Achat étalé'); await page.locator('input[name="spreadMode"][value="spread"]').check(); await page.locator('#spreadWeeks').selectOption('3');
+  await assertContains(page.locator('#spreadPreview'), '9,33'); await assertContains(page.locator('#spreadPreview'), '9,34');
+  await page.locator('#saveExpenseButton').click(); await page.locator('#expenseDialog').waitFor({ state: 'hidden' });
+  await assertContains(page.locator('#remaining'), '90,67'); await assertContains(page.locator('#futureCommitmentList'), '9,34');
+  const storedSpread = await page.evaluate(async () => { const saved = await RebootSecureStorage.read('reboot-local-v1', 'reboot-local-v1'); return { expenses: saved.expenses.filter(item => !item.deletedAt && item.label === 'Achat étalé'), allocations: saved.allocations.filter(item => !item.deletedAt && saved.expenses.find(expense => expense.id === item.transactionId)?.label === 'Achat étalé') }; });
+  if (storedSpread.expenses.length !== 1 || storedSpread.expenses[0].amountMinor !== 2800 || storedSpread.allocations.map(item => item.amountMinor).join(',') !== '933,933,934') throw new Error('A spread expense must remain one real transaction with exact weekly allocations');
+  await page.locator('#expenseList article', { hasText: 'Achat étalé' }).locator('[data-edit-expense]').click();
+  if (await page.locator('#expenseAmount').isEnabled() || await page.locator('#expenseDate').isEnabled()) throw new Error('An existing spread must require delete-and-recreate for structural changes');
+  await assertContains(page.locator('#spreadLock'), 'supprimez la dépense puis recréez-la'); await page.locator('#expenseDialog .close-button').click();
+  await page.locator('#addExpenseButton').click(); await page.locator('#expenseAmount').fill('180'); await page.locator('#expenseLabel').fill('Engagement dangereux'); await page.locator('input[name="spreadMode"][value="spread"]').check(); await page.locator('#spreadWeeks').selectOption('2');
+  await assertContains(page.locator('#spreadPreview'), 'réservera'); await assertContains(page.locator('#saveExpenseButton'), 'Confirmer quand même'); await page.locator('#expenseDialog .close-button').click();
+  page.once('dialog', dialog => dialog.accept()); await page.locator('#expenseList article', { hasText: 'Achat étalé' }).locator('[data-delete]').click();
+  const deletedSpread = await page.evaluate(async () => { const saved = await RebootSecureStorage.read('reboot-local-v1', 'reboot-local-v1'), expense = saved.expenses.find(item => item.label === 'Achat étalé'); return { expenseDeleted: Boolean(expense.deletedAt), allocationsDeleted: saved.allocations.filter(item => item.transactionId === expense.id).every(item => item.deletedAt) }; });
+  if (!deletedSpread.expenseDeleted || !deletedSpread.allocationsDeleted) throw new Error('Deleting a spread must tombstone its transaction and every allocation');
+  console.log('PASS manual spread previews cents, affects only the current allocation, warns, locks structural edits and deletes atomically');
+
+  await page.goto(`${baseUrl}/verifier.html`, { waitUntil: 'networkidle' });
+  const spreadImportDate = new Date(), spreadImportDateText = `${String(spreadImportDate.getDate()).padStart(2, '0')}/${String(spreadImportDate.getMonth() + 1).padStart(2, '0')}/${spreadImportDate.getFullYear()}`;
+  await page.locator('#csvFile').setInputFiles({ name: 'etalement.csv', mimeType: 'text/csv', buffer: Buffer.from(`Date;Libellé;Montant\n${spreadImportDateText};Achat bancaire étalé;-28\n`) });
+  await page.locator('#importButton').click(); const importRow = page.locator('.operation', { hasText: 'Achat bancaire étalé' }); await importRow.locator('[data-action="spread"]').click(); await page.locator('#spreadImportWeeks').selectOption('3'); await page.locator('#spreadImportSave').click();
+  const importedSpread = await page.evaluate(async () => { const saved = await RebootSecureStorage.read('reboot-local-v1', 'reboot-local-v1'), operation = saved.importedBankOperations.find(item => item.label === 'Achat bancaire étalé'), expense = saved.expenses.find(item => item.importedOperationId === operation.id); return { operationAmount: operation.amountMinor, operationDate: operation.date, expenseAmount: expense.amountMinor, allocations: saved.allocations.filter(item => item.transactionId === expense.id && !item.deletedAt).map(item => item.amountMinor) }; });
+  if (importedSpread.operationAmount !== -2800 || importedSpread.operationDate !== `${spreadImportDate.getFullYear()}-${String(spreadImportDate.getMonth() + 1).padStart(2, '0')}-${String(spreadImportDate.getDate()).padStart(2, '0')}` || importedSpread.expenseAmount !== 2800 || importedSpread.allocations.join(',') !== '933,933,934') throw new Error('Imported spread must not alter the original bank operation');
+  console.log('PASS an imported bank operation can be spread without changing its original date or amount');
+
+  await page.goto(`${baseUrl}/app.html`, { waitUntil: 'networkidle' });
+  await page.evaluate(async () => {
+    const saved = await RebootSecureStorage.read('reboot-local-v1', 'reboot-local-v1'), engine = RebootBudgetEngine, current = engine.cycleStartForDate(engine.dateKey(new Date()), saved.rebootDay), starts = [-21, -14, -7, 0].map(days => engine.addDays(current, days)), budgets = [18000, 22000, 10000, 99900], now = new Date().toISOString();
+    saved.expenses = [{ id: 'tracking-spread', date: starts[0], amountMinor: 30000, label: 'Dépense suivie étalée', funding: 'weekly', createdAt: now }, { id: 'tracking-extra-1', date: starts[0], amountMinor: 6000, label: 'Complément 1', funding: 'weekly', createdAt: now }, { id: 'tracking-extra-2', date: starts[1], amountMinor: 16000, label: 'Complément 2', funding: 'weekly', createdAt: now }, { id: 'tracking-current', date: starts[3], amountMinor: 99900, label: 'Cycle courant exclu', funding: 'weekly', createdAt: now }];
+    saved.refunds = [{ id: 'tracking-refund', date: starts[2], amountMinor: 1500, label: 'Correction', applyToBudget: true, health: false, createdAt: now }];
+    saved.weeklyCycles = starts.map((startDate, index) => ({ id: engine.cycleIdForStart(startDate), startDate, endDate: engine.addDays(startDate, 6), budgetMinor: budgets[index], status: index === 3 ? 'open' : 'closed', isExceptional: false, createdAt: now, closedAt: index === 3 ? '' : now }));
+    saved.allocations = starts.slice(0, 3).map((cycleStart, index) => ({ id: `tracking-spread-${index}`, transactionId: 'tracking-spread', cycleId: engine.cycleIdForStart(cycleStart), cycleStart, amountMinor: 10000, sequence: index + 1, sequenceCount: 3, createdAt: now }));
+    [['tracking-extra-1', starts[0], 6000], ['tracking-extra-2', starts[1], 16000], ['tracking-current', starts[3], 99900]].forEach(([transactionId, cycleStart, amountMinor], index) => saved.allocations.push({ id: `tracking-extra-allocation-${index}`, transactionId, cycleId: engine.cycleIdForStart(cycleStart), cycleStart, amountMinor, sequence: 1, sequenceCount: 1, createdAt: now }));
+    await RebootSecureStorage.save('reboot-local-v1', saved);
+  });
+  await page.reload({ waitUntil: 'networkidle' }); await page.goto(`${baseUrl}/app.html#tracking`, { waitUntil: 'networkidle' });
+  const trackingText = (await page.locator('#trackingView').innerText()).replace(/\s/g, ' ');
+  for (const expected of ['180,00', '220,00', '+ 20,00', '− 40,00', '+ 15,00', '− 5,00']) if (!trackingText.includes(expected)) throw new Error(`Tracking must retain historical budgets and signed totals: missing ${expected}`);
+  if (trackingText.includes('999,00')) throw new Error('The current open cycle must be excluded from tracking');
+  if ((await page.locator('[data-tracking-weeks]').count()) !== 5) throw new Error('Tracking must expose 4, 8, 16, 32 and 52 week filters');
+  console.log('PASS tracking excludes the current week, preserves historical budgets and totals signed gains and overages');
 
   await page.evaluate(async () => {
     localStorage.removeItem('reboot-drive-config-v2');
