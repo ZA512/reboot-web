@@ -145,6 +145,23 @@ function renderFreshness() {
   target.innerHTML = `<span class="status-dot"></span><span class="sync-label">${kind === 'drive' ? 'Drive' : 'Sauvegardé'} · ${date}</span>`;
 }
 
+function renderWeekMascot(cycle) {
+  const mascot = $('#weekMascot');
+  if (!mascot) return;
+  let mood = { file: 'happy-face.png', alt: 'Petit cochon souriant, prêt à commencer' };
+  if (cycle.configured) {
+    const ratio = cycle.budgetMinor > 0 ? cycle.remainingMinor / cycle.budgetMinor : 0;
+    if (ratio >= .55) mood = { file: 'zen.png', alt: 'Petit cochon zen : la semaine est confortable' };
+    else if (ratio >= .2) mood = { file: 'smily.png', alt: 'Petit cochon souriant : le budget tient bon' };
+    else if (ratio >= 0) mood = { file: 'thinking.png', alt: 'Petit cochon pensif : le budget devient serré' };
+    else if (ratio > -.25) mood = { file: 'very%20sad.png', alt: 'Petit cochon très triste : le budget est dépassé' };
+    else mood = { file: 'dead.png', alt: 'Petit cochon assommé : le budget est largement dépassé' };
+  }
+  const nextSource = `pictures/${mood.file}`;
+  if (!mascot.src.endsWith(nextSource)) mascot.src = nextSource;
+  mascot.alt = mood.alt;
+}
+
 function renderWeek() {
   const cycle = cycleInfo();
   $('#householdHeader').textContent = state.householdName || 'Notre foyer';
@@ -155,7 +172,7 @@ function renderWeek() {
     $('#remaining').textContent = formatMoney(cycle.remainingMinor); $('#remaining').classList.toggle('negative', cycle.remainingMinor < 0); $('#budgetTotal').textContent = formatMoney(cycle.budgetMinor); $('#cycleDates').textContent = `${shortDate(dateKey(cycle.start))} → ${shortDate(dateKey(cycle.end))}`; $('#daysLeft').textContent = cycle.daysLeft === 1 ? 'jusqu’à demain' : `${cycle.daysLeft} jours restants`; $('#dailyGuide').textContent = `${formatMoney(Math.max(0, cycle.remainingMinor) / cycle.daysLeft)} / jour`; $('#balanceTrack').style.width = `${cycle.budgetMinor ? Math.min(100, Math.max(0, (cycle.spentMinor - cycle.refundMinor) / cycle.budgetMinor * 100)) : 0}%`;
     const deduction = reserveDeductionMinor(); $('#reserveDeduction').classList.toggle('hidden', !deduction); $('#reserveDeduction').textContent = deduction ? `Réserves : − ${formatMoney(deduction)} / semaine` : '';
   }
-  renderSignal(cycle); renderCurrentExpenses(cycle); renderHealth(); renderWeekReserves(); renderFutureCommitments(); renderFreshness();
+  renderWeekMascot(cycle); renderSignal(cycle); renderCurrentExpenses(cycle); renderHealth(); renderWeekReserves(); renderFutureCommitments(); renderFreshness();
 }
 
 function cycleCommittedMinor(cycleStart, extras = [], excludeTransactionId = '') {
@@ -467,7 +484,7 @@ $('#syncNow').onclick = () => driveStatus?.state === 'reauth_required' ? window.
 
 (async function init() {
   try {
-    if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js?v=48', { updateViaCache: 'none' }).catch(() => {});
+    if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js?v=49', { updateViaCache: 'none' }).catch(() => {});
     // Drive starts its synchronization when drive.js loads. Render the encrypted local snapshot first so network latency never hides the budget.
     state = await loadState(); state.baseWeeklyBudgetMinor ||= state.weeklyBudgetMinor || 0; state.configured = Boolean(state.baseWeeklyBudgetMinor > 0 && state.rebootDay !== null && state.rebootDay !== undefined && state.rebootDay !== ''); const beforeWeeklyModel = JSON.stringify([state.weeklyCycles || [], state.allocations || []]), migrated = ensureHealthReserve(); synchronizeWeeklyModel(); if (migrated || beforeWeeklyModel !== JSON.stringify([state.weeklyCycles, state.allocations])) await saveState(); await refreshCalculatorStatus(); render(); showView(); const syncShown = showSyncCompleteNotice(); prepareWelcomeDialog(); if (!state.configured && !state.onboarding?.storage && !syncShown) $('#welcomeDialog').showModal(); finishInitialLoad();
   } catch (error) { state = defaultState(); ensureHealthReserve(); storageError = error?.message || 'Coffre local indisponible'; render(); showView(); $('#welcomeDialog').showModal(); finishInitialLoad(); }

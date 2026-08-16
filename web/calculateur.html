@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#B8325D">
 <title>REBOOT — Calculateur local v0.2</title><style>
 :root{
   --bg:#f4f7fb;--surface:#fff;--ink:#172033;--muted:#667085;--line:#d8e0eb;
@@ -28,6 +28,7 @@ details{border:1px solid var(--line);border-radius:15px;background:#fff;margin:1
 .discovery-filters{display:flex;gap:5px;flex-wrap:wrap}.discovery-filter{padding:6px 9px;border:1px solid var(--line);border-radius:6px;background:#fff;color:var(--ink);font:700 11px Arial,sans-serif;cursor:pointer}.discovery-filter[aria-checked="true"]{border-color:var(--brand);background:#dff1e9;color:#075c54}.discovery-filter .filter-count{margin-left:3px;color:var(--muted);font-weight:800}.reboot-toast{position:fixed;z-index:20;top:82px;left:50%;transform:translateX(-50%);max-width:min(560px,calc(100vw - 28px));padding:11px 15px;border:1px solid #8ccbb6;border-radius:8px;background:#e4f5ed;box-shadow:0 10px 28px rgba(18,43,37,.18);color:#075c54;font:700 13px/1.35 Arial,sans-serif;opacity:0;transition:opacity .16s}.reboot-toast.is-visible{opacity:1}
 .transaction-toolbar{flex-wrap:wrap}.transaction-toolbar .amount-filter{width:100px}
 </style>
+<link rel="icon" href="icons/favicon.ico" sizes="any"><link rel="icon" href="icons/favicon-32.png" type="image/png" sizes="32x32"><link rel="apple-touch-icon" href="icons/apple-touch-icon.png"><link rel="stylesheet" href="brand-theme.css">
 <body>
 <header class="reboot-nav"><a class="reboot-nav-brand" href="app.html"><span class="reboot-nav-mark">R</span><span><strong>REBOOT</strong><small>Le budget du foyer, sans détour</small></span></a><nav class="reboot-nav-links" aria-label="Navigation principale"><a class="reboot-nav-link" href="app.html">Suivi</a><a class="reboot-nav-link" href="calculateur.html" aria-current="page">Préparer le budget</a><a class="reboot-nav-link reboot-nav-link--verify" href="verifier.html">Vérifier</a><details class="reboot-nav-more"><summary>Plus</summary><div class="reboot-nav-menu"><a href="sauvegarde.html">Sauvegardes</a><a href="drive.html">Google Drive</a><a href="historique.html">Historique</a><a href="index.html">La méthode</a><button id="reset" class="reboot-nav-reset" type="button">Effacer ce calcul</button></div></details></nav></header>
 <div class="wizard-wrap">

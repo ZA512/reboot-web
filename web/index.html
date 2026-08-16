@@ -2,7 +2,9 @@
 <html lang="fr">
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="theme-color" content="#B8325D">
 <title>REBOOT — Un budget simple, semaine après semaine</title>
+<link rel="icon" href="icons/favicon.ico" sizes="any"><link rel="icon" href="icons/favicon-32.png" type="image/png" sizes="32x32"><link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
 <script src="secure-storage.js" defer></script>
 <script src="entry.js" defer></script>
 <style>
@@ -26,6 +28,7 @@ details{border:1px solid var(--line);border-radius:15px;background:#fff;margin:1
 <style>
 .start-grid{display:grid;gap:10px;margin-top:22px}.start-choice{display:grid;grid-template-columns:42px minmax(0,1fr) auto;align-items:center;gap:14px;padding:16px 17px;border:1px solid var(--line);border-radius:14px;background:#fff;color:var(--ink);text-decoration:none;transition:transform .16s ease,box-shadow .16s ease,border-color .16s ease}.start-choice:hover{transform:translateY(-1px);border-color:#9caeef;box-shadow:0 10px 20px rgba(35,48,82,.10)}.start-choice.primary{background:var(--brand);border-color:var(--brand);color:#fff}.start-choice strong,.start-choice small{display:block}.start-choice strong{font-size:.98rem}.start-choice small{font-size:.82rem;color:var(--muted);margin-top:3px}.start-choice.primary small{color:#e4e9ff}.start-icon{display:grid;place-items:center;width:42px;height:42px;border-radius:10px;background:var(--brand-soft);color:var(--brand);font-size:1.15rem;font-weight:900}.start-choice.primary .start-icon{background:rgba(255,255,255,.18);color:#fff}.start-arrow{font-size:1.35rem;font-weight:900}@media(max-width:520px){.start-choice{grid-template-columns:42px minmax(0,1fr)}.start-arrow{display:none}}
 </style>
+<link rel="stylesheet" href="brand-theme.css">
 </head>
 <body>
 <header class="topbar"><div class="topbar-inner">
@@ -46,6 +49,7 @@ details{border:1px solid var(--line);border-radius:15px;background:#fff;margin:1
 </div>
 </div>
 <div class="hero-card">
+<img class="hero-pig" src="pictures/happy-face-money.png" alt="Petit cochon REBOOT entouré de pièces">
 <span class="pill">Exemple</span>
 <p class="muted">Après calcul</p>
 <div class="big-number">120 € / semaine</div>
