@@ -100,6 +100,36 @@ button, input, select, textarea { font-family: inherit; }
 .reboot-nav-more summary:hover { color: var(--reboot-pink); }
 .reboot-nav-menu { border-color: var(--reboot-line); box-shadow: var(--reboot-shadow); }
 .reboot-nav-menu a:hover { color: var(--reboot-pink-dark); background: var(--reboot-blush); }
+.secondary-app-nav {
+  position: sticky;
+  z-index: 30;
+  top: 66px;
+  width: min(620px, calc(100% - 32px));
+  min-height: 58px;
+  margin: 0 auto;
+  padding: 5px;
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 3px;
+  border: 1px solid var(--reboot-line);
+  border-top: 0;
+  border-radius: 0 0 18px 18px;
+  background: rgba(255, 253, 252, .96);
+  box-shadow: 0 12px 30px rgba(102, 48, 67, .08);
+  backdrop-filter: blur(14px);
+}
+.secondary-app-nav a {
+  display: grid;
+  place-items: center;
+  min-width: 0;
+  border-radius: 12px;
+  color: var(--reboot-muted);
+  font-size: 12px;
+  font-weight: 800;
+  text-decoration: none;
+}
+.secondary-app-nav a:hover,
+.secondary-app-nav a:focus-visible { background: var(--reboot-blush); color: var(--reboot-pink-dark); outline: 0; }
 
 .app-loading-screen { background: var(--reboot-paper); color: var(--reboot-muted); }
 .app-loading-mark { width: 80px; height: 80px; padding: 0; border-radius: 26px; }
@@ -107,6 +137,7 @@ button, input, select, textarea { font-family: inherit; }
 .brand-mark { width: 44px; height: 44px; padding: 0; border-radius: 15px; }
 .sync-pill, .icon-button { border-color: var(--reboot-line); background: rgba(255, 255, 255, .8); }
 .status-dot { background: var(--reboot-gold); }
+.method-button { display: grid; place-items: center; min-width: 38px; min-height: 38px; text-decoration: none; font-size: 16px; font-weight: 900; }
 
 .bottom-nav { border-color: var(--reboot-line); background: rgba(255, 253, 252, .96); box-shadow: 0 -9px 30px rgba(102, 48, 67, .08); }
 .bottom-nav a { color: var(--reboot-muted); }
@@ -136,21 +167,47 @@ button, input, select, textarea { font-family: inherit; }
 .week-card .balance-label,
 .week-card .balance-context,
 .week-card .balance-footer { color: var(--reboot-muted); }
-.week-card .balance-value { color: var(--reboot-ink); max-width: calc(100% - 104px); }
+.week-card .balance-value { color: var(--reboot-ink); }
 .week-card .balance-value.negative { color: var(--reboot-danger); }
 .balance-track { background: rgba(184, 50, 93, .12); }
 .balance-track span { background: linear-gradient(90deg, var(--reboot-gold), #f1bf45); }
+.week-card .balance-footer {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  justify-content: start;
+  gap: 2px;
+  min-height: 36px;
+  padding-right: 118px;
+}
+.week-card .balance-footer strong { justify-self: start; white-space: nowrap; }
+.week-card .reserve-deduction { max-width: calc(100% - 118px); }
 .week-mascot {
   position: absolute;
   z-index: 0;
   right: 10px;
   bottom: 7px;
-  width: 116px;
-  height: 116px;
+  width: 106px;
+  height: 106px;
   object-fit: contain;
   filter: drop-shadow(0 9px 9px rgba(102, 46, 65, .14));
   transition: opacity .18s ease, transform .18s ease;
 }
+
+.view-head { position: relative; min-height: 104px; }
+.view-head > div:first-child { min-width: 0; }
+.view-mascot {
+  flex: 0 0 116px;
+  width: 116px;
+  height: 96px;
+  margin: -18px auto -10px;
+  object-fit: contain;
+  border-radius: 50%;
+  background:
+    radial-gradient(ellipse at 50% 86%, rgba(214, 163, 41, .24) 0 24%, transparent 25%),
+    radial-gradient(circle at 34% 22%, rgba(248, 216, 224, .72), transparent 62%);
+  filter: drop-shadow(0 10px 10px rgba(104, 50, 69, .14));
+}
+.view-head > .button { flex: 0 0 auto; }
 
 .quick-action.primary,
 .button-primary,
@@ -225,12 +282,27 @@ body:has(#count) .shell::before { display: block; background-image: url("picture
 
 @media (max-width: 600px) {
   .week-card { min-height: 288px; }
-  .week-card .balance-value { max-width: calc(100% - 76px); }
-  .week-mascot { width: 92px; height: 92px; right: 4px; bottom: 7px; }
+  .week-card .balance-footer { padding-right: 100px; }
+  .week-card .reserve-deduction { max-width: calc(100% - 96px); }
+  .week-mascot { width: 88px; height: 88px; right: 7px; bottom: 9px; }
+  .view-head { min-height: 90px; gap: 8px; }
+  .view-mascot { flex-basis: 82px; width: 82px; height: 74px; margin: -8px 0 -6px auto; }
+  .view-head:has(> .button) { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: end; }
+  .view-head:has(> .button) > div:first-child { grid-row: 1 / 3; }
+  .view-head:has(> .button) .view-mascot { grid-column: 2; grid-row: 1; }
+  .view-head:has(> .button) > .button { grid-column: 2; grid-row: 2; }
   .page-mascot { width: 122px; height: 105px; margin-top: -42px; }
   .shell::before { width: 112px; height: 92px; margin-top: -26px; }
   .verify-head::after { width: 105px; height: 88px; margin-left: auto; }
   .wizard-head::after { display: none; }
+  .secondary-app-nav { top: 62px; width: 100%; min-height: 54px; border-radius: 0; border-left: 0; border-right: 0; overflow-x: auto; }
+  .secondary-app-nav a { font-size: 10px; }
+}
+
+@media (max-width: 430px) {
+  .week-card .balance-footer { padding-right: 88px; }
+  .week-card .reserve-deduction { max-width: calc(100% - 84px); font-size: 10px; }
+  .week-mascot { width: 78px; height: 78px; }
 }
 
 @media (prefers-reduced-motion: reduce) {

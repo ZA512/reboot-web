@@ -9,8 +9,12 @@ async function hasConfiguredLocalTracker() {
     && state.rebootDay !== '';
 }
 
-hasConfiguredLocalTracker().then((configured) => {
-  if (configured) window.location.replace('app.html');
-}).catch(() => {
-  // An unreadable local store must never block access to the onboarding page.
-});
+const METHOD_PREVIEW = new URLSearchParams(window.location.search).get('method') === '1';
+
+if (!METHOD_PREVIEW) {
+  hasConfiguredLocalTracker().then((configured) => {
+    if (configured) window.location.replace('app.html');
+  }).catch(() => {
+    // An unreadable local store must never block access to the onboarding page.
+  });
+}

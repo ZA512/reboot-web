@@ -1,4 +1,4 @@
-const CACHE_NAME = 'reboot-shell-v49';
+const CACHE_NAME = 'reboot-shell-v50';
 const SHELL = [
   './app.html',
   './version.txt',
@@ -31,6 +31,9 @@ const SHELL = [
   './pictures/decontracted.png',
   './pictures/braging.png',
   './pictures/questionning.png',
+  './pictures/dancing.png',
+  './pictures/surprised.png',
+  './pictures/sleepy-back.png',
   './historique.html',
   './verifier.html',
   './sauvegarde.html',
