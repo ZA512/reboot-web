@@ -45,13 +45,22 @@ function recordEvent(type, entity, entityId, before = null, after = null) { stat
 
 function createWeeklyCycle(startDate, budgetMinor = null, status = 'planned') {
   const now = new Date().toISOString();
-  return { id: RebootBudgetEngine.cycleIdForStart(startDate), startDate, endDate: RebootBudgetEngine.addDays(startDate, 6), budgetMinor, status, isExceptional: false, createdAt: now, updatedAt: now };
+  return { id: RebootBudgetEngine.cycleIdForStart(startDate), startDate, endDate: RebootBudgetEngine.addDays(startDate, 6), budgetMinor, status, isExceptional: false, createdAt: now, updatedAt: now, ...(status === 'closed' ? { closedAt: now } : status === 'open' ? { openedAt: now } : {}) };
 }
 function allocationCycleStart(date) { return RebootBudgetEngine.cycleStartForDate(date, state.rebootDay); }
 function ensureCycle(startDate, budgetMinor = null, status = 'planned') {
   let cycle = state.weeklyCycles.find(item => item.id === RebootBudgetEngine.cycleIdForStart(startDate) && !item.deletedAt);
   if (!cycle) { cycle = createWeeklyCycle(startDate, budgetMinor, status); state.weeklyCycles.push(cycle); }
+  else if ((cycle.budgetMinor === null || cycle.budgetMinor === undefined || !Number.isFinite(Number(cycle.budgetMinor))) && budgetMinor !== null && budgetMinor !== undefined && Number.isFinite(Number(budgetMinor))) { cycle.budgetMinor = Number(budgetMinor); cycle.updatedAt = new Date().toISOString(); }
   return cycle;
+}
+function cycleStatusForStart(startDate, currentStart) { return startDate < currentStart ? 'closed' : startDate === currentStart ? 'open' : 'planned'; }
+function cycleBudgetForStart(startDate, currentStart, currentBudget) {
+  if (startDate >= currentStart) return currentBudget;
+  const known = state.weeklyCycles.filter(item => !item.deletedAt && item.budgetMinor !== null && item.budgetMinor !== undefined && Number.isFinite(Number(item.budgetMinor))).sort((a, b) => a.startDate.localeCompare(b.startDate));
+  const previous = known.filter(item => item.startDate <= startDate).at(-1);
+  const next = known.find(item => item.startDate > startDate);
+  return Number(previous?.budgetMinor ?? next?.budgetMinor ?? currentBudget);
 }
 function synchronizeWeeklyModel() {
   state.weeklyCycles ||= []; state.allocations ||= [];
@@ -66,24 +75,28 @@ function synchronizeWeeklyModel() {
   const historicalAnchor = state.weeklyCycles.filter(item => !item.deletedAt && item.startDate < currentStart && item.budgetMinor !== null && item.budgetMinor !== undefined && Number.isFinite(Number(item.budgetMinor))).sort((a, b) => b.startDate.localeCompare(a.startDate))[0];
   if (historicalAnchor) { for (let start = RebootBudgetEngine.addDays(historicalAnchor.startDate, 7); start < currentStart; start = RebootBudgetEngine.addDays(start, 7)) { const cycle = ensureCycle(start, historicalAnchor.budgetMinor, 'closed'); if (!cycle.closedAt) Object.assign(cycle, { status: 'closed', closedAt: now, updatedAt: now }); } }
   for (const expense of state.expenses.filter(item => item.funding === 'weekly' && !item.deletedAt)) {
-    if (state.allocations.some(item => item.transactionId === expense.id && !item.deletedAt)) continue;
-    const cycleStart = allocationCycleStart(expense.date);
-    const status = cycleStart < currentStart ? 'closed' : cycleStart === currentStart ? 'open' : 'planned';
-    const budget = cycleStart < currentStart ? null : currentBudget;
-    const cycle = ensureCycle(cycleStart, budget, status);
+    const allocations = state.allocations.filter(item => item.transactionId === expense.id && !item.deletedAt);
+    const cycleStart = allocationCycleStart(expense.date), status = cycleStatusForStart(cycleStart, currentStart), budget = cycleBudgetForStart(cycleStart, currentStart, currentBudget), cycle = ensureCycle(cycleStart, budget, status);
+    if (allocations.length === 1 && Number(allocations[0].sequenceCount || 1) === 1 && (allocations[0].cycleStart !== cycleStart || Number(allocations[0].amountMinor) !== Number(expense.amountMinor))) Object.assign(allocations[0], { cycleId: cycle.id, cycleStart, amountMinor: expense.amountMinor, updatedAt: now });
+    if (allocations.length) continue;
     state.allocations.push({ id: createId(), transactionId: expense.id, cycleId: cycle.id, cycleStart, amountMinor: expense.amountMinor, sequence: 1, sequenceCount: 1, createdAt: expense.createdAt || now, updatedAt: now });
   }
+  const datedBudgetEntries = [
+    ...state.refunds.filter(item => item.applyToBudget && !item.health && !item.deletedAt),
+    ...state.reserveTransfers.filter(item => item.sourceType === 'weekly' && !item.deletedAt)
+  ];
+  for (const entry of datedBudgetEntries) { const cycleStart = allocationCycleStart(entry.date); ensureCycle(cycleStart, cycleBudgetForStart(cycleStart, currentStart, currentBudget), cycleStatusForStart(cycleStart, currentStart)); }
   for (const allocation of state.allocations.filter(item => !item.deletedAt)) {
-    const status = allocation.cycleStart < currentStart ? 'closed' : allocation.cycleStart === currentStart ? 'open' : 'planned';
-    ensureCycle(allocation.cycleStart, allocation.cycleStart < currentStart ? null : currentBudget, status);
+    const status = cycleStatusForStart(allocation.cycleStart, currentStart);
+    ensureCycle(allocation.cycleStart, cycleBudgetForStart(allocation.cycleStart, currentStart, currentBudget), status);
   }
 }
 function activeAllocations(transactionId = '') { return state.allocations.filter(item => !item.deletedAt && (!transactionId || item.transactionId === transactionId)); }
 function createAllocations(expense, weeks = 1, startMode = 'current') {
-  const currentStart = allocationCycleStart(dateKey(new Date()));
-  const firstStart = startMode === 'next' ? RebootBudgetEngine.addDays(currentStart, 7) : currentStart;
+  const currentStart = allocationCycleStart(dateKey(new Date())), currentBudget = effectiveWeeklyBudgetMinor();
+  const firstStart = Number(weeks) > 1 ? startMode === 'next' ? RebootBudgetEngine.addDays(currentStart, 7) : currentStart : allocationCycleStart(expense.date);
   const amounts = RebootBudgetEngine.splitAmountMinor(expense.amountMinor, weeks), now = new Date().toISOString();
-  return amounts.map((amountMinor, index) => { const cycleStart = RebootBudgetEngine.addDays(firstStart, index * 7), cycle = ensureCycle(cycleStart, effectiveWeeklyBudgetMinor(), cycleStart === currentStart ? 'open' : 'planned'); return { id: createId(), transactionId: expense.id, cycleId: cycle.id, cycleStart, amountMinor, sequence: index + 1, sequenceCount: weeks, createdAt: now, updatedAt: now }; });
+  return amounts.map((amountMinor, index) => { const cycleStart = RebootBudgetEngine.addDays(firstStart, index * 7), cycle = ensureCycle(cycleStart, cycleBudgetForStart(cycleStart, currentStart, currentBudget), cycleStatusForStart(cycleStart, currentStart)); return { id: createId(), transactionId: expense.id, cycleId: cycle.id, cycleStart, amountMinor, sequence: index + 1, sequenceCount: weeks, createdAt: now, updatedAt: now }; });
 }
 
 function startOfCycle(today = new Date()) { if (state.rebootDay === null || state.rebootDay === undefined || !state.configured) return null; const start = new Date(today.getFullYear(), today.getMonth(), today.getDate()); start.setDate(start.getDate() - (start.getDay() - Number(state.rebootDay) + 7) % 7); return start; }
@@ -484,7 +497,7 @@ $('#syncNow').onclick = () => driveStatus?.state === 'reauth_required' ? window.
 
 (async function init() {
   try {
-    if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js?v=50', { updateViaCache: 'none' }).catch(() => {});
+    if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js?v=51', { updateViaCache: 'none' }).catch(() => {});
     // Drive starts its synchronization when drive.js loads. Render the encrypted local snapshot first so network latency never hides the budget.
     state = await loadState(); state.baseWeeklyBudgetMinor ||= state.weeklyBudgetMinor || 0; state.configured = Boolean(state.baseWeeklyBudgetMinor > 0 && state.rebootDay !== null && state.rebootDay !== undefined && state.rebootDay !== ''); const beforeWeeklyModel = JSON.stringify([state.weeklyCycles || [], state.allocations || []]), migrated = ensureHealthReserve(); synchronizeWeeklyModel(); if (migrated || beforeWeeklyModel !== JSON.stringify([state.weeklyCycles, state.allocations])) await saveState(); await refreshCalculatorStatus(); render(); showView(); const syncShown = showSyncCompleteNotice(); prepareWelcomeDialog(); if (!state.configured && !state.onboarding?.storage && !syncShown) $('#welcomeDialog').showModal(); finishInitialLoad();
   } catch (error) { state = defaultState(); ensureHealthReserve(); storageError = error?.message || 'Coffre local indisponible'; render(); showView(); $('#welcomeDialog').showModal(); finishInitialLoad(); }
