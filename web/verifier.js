@@ -22,7 +22,10 @@
   let household = null;
   let calculator = null;
   let headers = [];
+  let allRows = [];
   let rawRows = [];
+  let headerRowIndex = 0;
+  let fileEncoding = '';
   let mapping = null;
   let mappingProfileReused = false;
   let reviewFilter = 'pending';
@@ -141,27 +144,51 @@
     return drafts.get(operation.id);
   }
 
-  function parseCsvLine(line, delimiter) {
-    const values = []; let current = ''; let quoted = false;
-    for (let index = 0; index < line.length; index += 1) {
-      const character = line[index];
-      if (character === '"' && line[index + 1] === '"' && quoted) { current += '"'; index += 1; }
-      else if (character === '"') quoted = !quoted;
-      else if (character === delimiter && !quoted) { values.push(current.trim()); current = ''; }
-      else current += character;
+  function parseCsv(text, delimiter) {
+    const rows = []; let row = [], cell = '', quoted = false;
+    for (let index = 0; index < text.length; index += 1) {
+      const character = text[index], next = text[index + 1];
+      if (character === '"') { if (quoted && next === '"') { cell += '"'; index += 1; } else quoted = !quoted; }
+      else if (character === delimiter && !quoted) { row.push(cell.trim()); cell = ''; }
+      else if ((character === '\n' || character === '\r') && !quoted) {
+        if (character === '\r' && next === '\n') index += 1;
+        row.push(cell.trim()); cell = ''; if (row.some(value => String(value).trim())) rows.push(row); row = [];
+      } else cell += character;
     }
-    values.push(current.trim()); return values;
+    row.push(cell.trim()); if (row.some(value => String(value).trim())) rows.push(row); return rows;
+  }
+
+  function headerScore(row = []) {
+    const content = normalize(row.join(' ')), filled = row.filter(value => String(value).trim()).length;
+    const hasDate = /(^| )date( |$)/.test(content), hasLabel = /libelle|description|intitule|operation/.test(content), hasAmount = /montant|amount|debit|credit/.test(content);
+    const keywords = (content.match(/date|libelle|description|intitule|operation|montant|amount|debit|credit/g) || []).length;
+    return filled + keywords * 5 + (hasDate && hasLabel && hasAmount ? 35 : 0);
+  }
+
+  function autoHeader(rows) {
+    let bestIndex = 0, bestScore = -1;
+    for (let index = 0; index < Math.min(rows.length, 50); index += 1) {
+      const width = rows[index].length, following = rows.slice(index + 1, index + 6).filter(row => row.length === width && row.some(value => String(value).trim())).length;
+      const score = headerScore(rows[index]) + following * 2;
+      if (score > bestScore) { bestScore = score; bestIndex = index; }
+    }
+    return bestIndex;
   }
 
   function delimiterFor(text) {
-    const first = text.split(/\r?\n/).find(line => line.trim()) || '';
-    return [',', ';', '\t', '|'].map(delimiter => ({ delimiter, count: parseCsvLine(first, delimiter).length })).sort((a, b) => b.count - a.count)[0].delimiter;
+    return [';', ',', '\t', '|'].map(delimiter => {
+      const rows = parseCsv(text, delimiter), header = autoHeader(rows), width = rows[header]?.length || 1;
+      return { delimiter, score: headerScore(rows[header]) + Math.min(width, 12) * 2 + rows.slice(header + 1, header + 8).filter(row => row.length === width).length * 2 };
+    }).sort((first, second) => second.score - first.score)[0].delimiter;
   }
 
   function decodeFile(file) {
     return file.arrayBuffer().then(buffer => {
-      const bytes = new Uint8Array(buffer), utf8 = new TextDecoder('utf-8', { fatal: false }).decode(bytes);
-      return utf8.includes('\uFFFD') ? new TextDecoder('windows-1252').decode(bytes) : utf8;
+      const bytes = new Uint8Array(buffer); let text = '', encoding = 'UTF-8';
+      try { text = new TextDecoder('utf-8', { fatal: true }).decode(bytes); }
+      catch { text = new TextDecoder('windows-1252').decode(bytes); encoding = 'Windows-1252'; }
+      if (text.includes('\uFFFD')) { const fallback = new TextDecoder('windows-1252').decode(bytes); if ((fallback.match(/\uFFFD/g) || []).length < (text.match(/\uFFFD/g) || []).length) { text = fallback; encoding = 'Windows-1252'; } }
+      return { text, encoding };
     });
   }
 
@@ -170,26 +197,32 @@
   }
 
   function guessedMapping() {
-    return {
+    const guessed = {
       date: findHeader(['date operation', 'date valeur', 'date']),
       label: findHeader(['libelle', 'description', 'intitule', 'operation']),
       amount: findHeader(['montant', 'amount']),
       debit: findHeader(['debit']),
       credit: findHeader(['credit'])
     };
+    guessed.amountMode = guessed.amount >= 0 ? 'signed' : 'split'; return guessed;
   }
 
-  function mappingOption(index) { return `<option value="${index}">${index < 0 ? '— Non utilisé —' : escapeHtml(headers[index])}</option>`; }
+  function mappingOption(index, optional = false) { return `<option value="${index}">${index < 0 ? optional ? '— Non utilisé —' : '— Choisir une colonne —' : escapeHtml(headers[index])}</option>`; }
   function mappingSelect(id, label, selected, optional = false) {
-    return `<label>${label}<select id="${id}">${optional ? mappingOption(-1) : ''}${headers.map((_, index) => mappingOption(index)).join('')}</select></label>`;
+    return `<label>${label}<select id="${id}">${mappingOption(-1, optional)}${headers.map((_, index) => mappingOption(index)).join('')}</select></label>`;
   }
 
-  function renderMapping() {
+  function renderMapping(preferredMapping = null) {
     const stored = household.bankImportMapping;
-    mappingProfileReused = Boolean(stored && stored.signature === headers.map(normalize).join('|'));
-    mapping = mappingProfileReused ? { ...stored.columns } : guessedMapping();
-    $('#mapping').innerHTML = mappingSelect('mapDate', 'Date banque', mapping.date) + mappingSelect('mapLabel', 'Description', mapping.label) + (mapping.amount >= 0 ? mappingSelect('mapAmount', 'Montant signé', mapping.amount) : mappingSelect('mapDebit', 'Débit', mapping.debit, true) + mappingSelect('mapCredit', 'Crédit', mapping.credit, true));
+    mappingProfileReused = Boolean(!preferredMapping && stored && stored.signature === headers.map(normalize).join('|'));
+    mapping = preferredMapping ? { ...preferredMapping } : mappingProfileReused ? { ...stored.columns } : guessedMapping();
+    mapping.amountMode ||= mapping.amount >= 0 ? 'signed' : 'split';
+    const headerControl = `<label>Ligne d’en-tête<input id="mapHeaderRow" type="number" min="1" max="${allRows.length}" value="${headerRowIndex + 1}"></label>`;
+    const modeControl = `<label>Format du montant<select id="mapAmountMode"><option value="signed" ${mapping.amountMode === 'signed' ? 'selected' : ''}>Une colonne signée</option><option value="split" ${mapping.amountMode === 'split' ? 'selected' : ''}>Deux colonnes débit / crédit</option></select></label>`;
+    $('#mapping').innerHTML = `<div class="mapping-detection"><strong>En-tête détectée ligne ${headerRowIndex + 1}</strong><span>${rawRows.length} ligne${rawRows.length > 1 ? 's' : ''} après l’en-tête · ${fileEncoding || 'encodage automatique'}. Modifiez la ligne si nécessaire.</span></div>` + headerControl + mappingSelect('mapDate', 'Date banque', mapping.date) + mappingSelect('mapLabel', 'Description', mapping.label) + modeControl + (mapping.amountMode === 'signed' ? mappingSelect('mapAmount', 'Montant signé', mapping.amount) : mappingSelect('mapDebit', 'Débit', mapping.debit, true) + mappingSelect('mapCredit', 'Crédit', mapping.credit, true));
     $('#mapping').classList.remove('hidden');
+    $('#mapHeaderRow').onchange = event => { const next = Math.max(0, Math.min(allRows.length - 1, Number(event.target.value || 1) - 1)); if (next === headerRowIndex) return; headerRowIndex = next; headers = allRows[headerRowIndex] || []; rawRows = allRows.slice(headerRowIndex + 1); renderMapping(); };
+    $('#mapAmountMode').onchange = event => renderMapping({ ...mapping, amountMode: event.target.value });
     for (const [id, key] of [['mapDate', 'date'], ['mapLabel', 'label'], ['mapAmount', 'amount'], ['mapDebit', 'debit'], ['mapCredit', 'credit']]) {
       const select = $(`#${id}`); if (!select) continue; select.value = String(mapping[key] ?? -1); select.onchange = () => { mapping[key] = Number(select.value); renderPreview(); };
     }
@@ -218,7 +251,7 @@
     if (!mapping || mapping.date < 0 || mapping.label < 0) return [];
     return rawRows.map(row => {
       const bankDate = parseFrenchDate(row[mapping.date]), label = String(row[mapping.label] || '').trim();
-      const amountMinor = mapping.amount >= 0 ? parseAmount(row[mapping.amount]) : parseAmount(row[mapping.credit]) - Math.abs(parseAmount(row[mapping.debit]));
+      const amountMinor = mapping.amountMode === 'signed' ? parseAmount(row[mapping.amount]) : parseAmount(row[mapping.credit]) - Math.abs(parseAmount(row[mapping.debit]));
       const purchaseDate = purchaseDateFromLabel(label, bankDate);
       return { bankDate, purchaseDate, effectiveDate: purchaseDate || bankDate, label, amountMinor };
     }).filter(item => item.bankDate && item.label && item.amountMinor);
@@ -399,9 +432,9 @@
 
   async function handleFile(file) {
     if (!file) return;
-    const text = await decodeFile(file), delimiter = delimiterFor(text), lines = text.split(/\r?\n/).filter(line => line.trim());
-    if (lines.length < 2) { $('#importNotice').className = 'notice warning'; $('#importNotice').textContent = 'Ce fichier ne contient pas assez de lignes.'; $('#importNotice').classList.remove('hidden'); return; }
-    headers = parseCsvLine(lines[0], delimiter); rawRows = lines.slice(1).map(line => parseCsvLine(line, delimiter)).filter(row => row.some(Boolean)); renderMapping();
+    const decoded = await decodeFile(file), delimiter = delimiterFor(decoded.text); fileEncoding = decoded.encoding; allRows = parseCsv(decoded.text, delimiter);
+    if (allRows.length < 2) { $('#importNotice').className = 'notice warning'; $('#importNotice').textContent = 'Ce fichier ne contient pas assez de lignes.'; $('#importNotice').classList.remove('hidden'); return; }
+    headerRowIndex = autoHeader(allRows); headers = allRows[headerRowIndex] || []; rawRows = allRows.slice(headerRowIndex + 1); renderMapping();
   }
 
   async function init() {

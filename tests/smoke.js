@@ -510,8 +510,10 @@ try {
   await page.locator('#csvFile').setInputFiles({
     name: 'controle.csv',
     mimeType: 'text/csv',
-    buffer: Buffer.from(`Date;Libellé;Montant\n${todayText};CB ${String(today.getDate()).padStart(2, '0')}/${String(today.getMonth() + 1).padStart(2, '0')} Courses;-42\n${todayText};Pharmacie;-65\n`)
+    buffer: Buffer.from(`Téléchargement du ${todayText}\nCompte : 123456\nDate;Libellé;Montant\n${todayText};CB ${String(today.getDate()).padStart(2, '0')}/${String(today.getMonth() + 1).padStart(2, '0')} Courses;-42\n${todayText};Pharmacie;-65\nSolde disponible;;1234,56\n`)
   });
+  if ((await page.locator('#mapHeaderRow').inputValue()) !== '3') throw new Error('The bank importer must skip preamble lines and detect the real header row');
+  if ((await page.locator('#mapDate').inputValue()) !== '0' || (await page.locator('#mapLabel').inputValue()) !== '1' || (await page.locator('#mapAmount').inputValue()) !== '2') throw new Error('Detected bank columns must remain selectable and be mapped automatically');
   await page.locator('#importButton').click();
   await page.waitForFunction(() => document.querySelector('#summary')?.textContent?.includes('2opérations conservées'));
   await assertContains(page.locator('#summary'), '2');
@@ -524,7 +526,7 @@ try {
   await page.locator('#csvFile').setInputFiles({
     name: 'controle-suivant.csv',
     mimeType: 'text/csv',
-    buffer: Buffer.from(`Date;Libellé;Montant\n${todayText};CB ${String(today.getDate()).padStart(2, '0')}/${String(today.getMonth() + 1).padStart(2, '0')} Courses;-42\n${todayText};Pharmacie;-65\n`)
+    buffer: Buffer.from(`Export généré le ${todayText}\nDate;Libellé;Montant\n${todayText};CB ${String(today.getDate()).padStart(2, '0')}/${String(today.getMonth() + 1).padStart(2, '0')} Courses;-42\n${todayText};Pharmacie;-65\n`)
   });
   await assertContains(page.locator('#importNotice'), 'Colonnes reconnues');
   await page.locator('#importButton').click();
@@ -535,7 +537,7 @@ try {
   if (reconciliationState.pointed !== 2 || reconciliationState.courses !== 1 || reconciliationState.pharmacy !== 1) throw new Error(`Pointing must preserve an existing transaction and create only the forgotten one: ${JSON.stringify(reconciliationState)}`);
   await page.goto(`${baseUrl}/app.html`, { waitUntil: 'networkidle' });
   await assertContains(page.locator('#remaining'), '302,61');
-  console.log('PASS local CSV verification extracts the purchase date, retains pointings and creates only confirmed forgotten expenses');
+  console.log('PASS local CSV verification skips bank preambles, maps selectable columns, extracts the purchase date, retains pointings and creates only confirmed forgotten expenses');
 
   await page.locator('#addExpenseButton').click(); await page.locator('#expenseAmount').fill('7'); await page.locator('#expenseLabel').fill('Boulangerie'); await page.locator('.nature-choice', { hasText: 'Plaisir' }).click(); await page.locator('input[name="funding"][value="annualized"]').check(); await page.locator('#saveAsShortcut').check(); await page.locator('#saveExpenseButton').click(); await page.locator('#expenseDialog').waitFor({ state: 'hidden' });
   await page.locator('#addExpenseButton').click(); const shortcut = page.locator('[data-shortcut]', { hasText: 'Boulangerie' }); await shortcut.click();
