@@ -326,6 +326,42 @@
     return labels[item.action] || 'Pointée';
   }
 
+  const operationGroups = [
+    { key: 'existing', title: 'Budget déjà saisi', description: 'Même montant et date compatible : aucune nouvelle dépense ne sera créée.', actions: ['existing', 'existing_refund'] },
+    { key: 'new-budget', title: 'Nouveau budget', description: 'Ces mouvements seront ajoutés au budget de la semaine concernée.', actions: ['weekly', 'refund_weekly'] },
+    { key: 'charges', title: 'Charges prévues', description: 'Ces opérations seront rattachées aux charges ou revenus déjà prévus.', actions: ['charge', 'planned_income'] },
+    { key: 'health', title: 'Santé remboursable', description: 'Dépenses et remboursements suivis dans la réserve Santé.', actions: ['health', 'health_refund'] },
+    { key: 'reserves', title: 'Réserves', description: 'Ces dépenses seront financées par une réserve existante.', actions: ['reserve'] },
+    { key: 'spread', title: 'À répartir', description: 'Chaque opération nécessite encore le choix de ses semaines.', actions: ['spread'], batch: false },
+    { key: 'no-effect', title: 'Sans effet sur le budget', description: 'Transferts et opérations volontairement ignorées.', actions: ['transfer', 'ignore'] },
+    { key: 'pointed', title: 'Déjà pointées', description: 'Ces opérations ont déjà été validées.', actions: [], batch: false }
+  ];
+
+  function groupForOperation(operation) {
+    if (activeReconciliation(operation.id)) return operationGroups.find(group => group.key === 'pointed');
+    const action = draftFor(operation).action;
+    return operationGroups.find(group => group.actions.includes(action)) || operationGroups.find(group => group.key === 'no-effect');
+  }
+
+  function draftReady(draft) {
+    return draft.action !== 'spread' && (!['existing', 'existing_refund', 'charge', 'reserve', 'planned_income'].includes(draft.action) || Boolean(draft.target));
+  }
+
+  function operationHeadHtml() {
+    return '<div class="operation-head" aria-hidden="true"><span>Date banque</span><span>Date achat</span><span>Description</span><span>Montant</span><span>Affectation</span><span>Cible</span><span></span></div>';
+  }
+
+  function operationGroupsHtml(operations) {
+    return operationGroups.map(group => {
+      const entries = operations.filter(operation => groupForOperation(operation).key === group.key);
+      if (!entries.length) return '';
+      const rows = entries.map(operationHtml).join('');
+      const pending = group.key !== 'pointed', ready = pending && group.batch !== false && entries.every(operation => draftReady(draftFor(operation)));
+      const footer = pending ? `<div class="operation-group-footer">${ready ? `<button class="button button-primary" type="button" data-confirm-group="${group.key}">Valider les ${entries.length} opération${entries.length > 1 ? 's' : ''} de cette section</button>` : '<span>Complétez les choix de cette section avant de la valider.</span>'}</div>` : '';
+      return `<section class="operation-group" data-operation-group="${group.key}"><div class="operation-group-heading"><div><p class="kicker">${escapeHtml(group.title)}</p><p>${escapeHtml(group.description)}</p></div><strong>${entries.length}</strong></div>${operationHeadHtml()}<div class="operation-group-list">${rows}</div>${footer}</section>`;
+    }).join('');
+  }
+
   function operationHtml(operation) {
     const reconciliation = activeReconciliation(operation.id), dateSource = operation.purchaseDate ? 'Trouvée dans le libellé' : 'Date banque utilisée';
     if (reconciliation) return `<article class="operation-row pointed" data-operation-row="${operation.id}"><div class="operation-cell bank-date" data-label="Date banque"><strong>${formatDate(operation.bankDate)}</strong></div><div class="operation-cell purchase-date" data-label="Date achat"><strong>${formatDate(operation.effectiveDate)}</strong><span class="date-source ${operation.purchaseDate ? 'detected' : ''}">${dateSource}</span></div><div class="operation-cell description-cell" data-label="Description"><button type="button" class="description-button" data-description="${operation.id}">${escapeHtml(operation.label)}</button></div><div class="operation-cell operation-amount ${operation.amountMinor < 0 ? 'amount-out' : 'amount-in'}" data-label="Montant">${money(operation.amountMinor)}</div><div class="pointed-summary">${escapeHtml(reconciliationLabel(reconciliation))}${reconciliation.confirmedAt ? ` · ${formatDate(reconciliation.confirmedAt.slice(0, 10))}` : ''}</div><div class="operation-cell action-cell"><button class="row-button secondary" type="button" data-unpoint-operation="${operation.id}">Désaffecter</button></div></article>`;
@@ -342,7 +378,7 @@
     $('#summary').innerHTML = `<div><strong>${operations.length}</strong><span>opérations conservées</span></div><div><strong>${pending.length}</strong><span>encore à décider</span></div><div><strong>${pointed.length}</strong><span>déjà pointées</span></div>`;
     $('#operationTable').classList.toggle('hidden', !visible.length); $('#reviewEmpty').classList.toggle('hidden', Boolean(visible.length));
     $('#reviewEmpty strong').textContent = operations.length ? reviewFilter === 'pending' ? 'Tout est pointé.' : 'Aucune opération dans cette vue.' : 'Rien à pointer pour le moment.';
-    $('#operationList').innerHTML = visible.map(operationHtml).join('');
+    $('#operationList').innerHTML = operationGroupsHtml(visible);
     bindRows(operations);
   }
 
@@ -356,6 +392,7 @@
       row.querySelector('[data-variable]')?.addEventListener('change', event => { draft.variable = event.target.checked; });
     });
     $$('[data-confirm-operation]').forEach(button => button.onclick = () => confirmOperation(byId.get(button.dataset.confirmOperation)));
+    $$('[data-confirm-group]').forEach(button => button.onclick = () => confirmOperationGroup(button.dataset.confirmGroup, operations));
     $$('[data-unpoint-operation]').forEach(button => button.onclick = () => unpointOperation(byId.get(button.dataset.unpointOperation)));
   }
 
@@ -386,8 +423,12 @@
   }
 
   async function finalizeOperation(operation, draft, createdEntity = null) {
+    finalizeOperationData(operation, draft, createdEntity); await save(); drafts.delete(operation.id); renderReview();
+  }
+
+  function finalizeOperationData(operation, draft, createdEntity = null) {
     const now = new Date().toISOString(), reconciliation = { id: createId(), bankOperationId: operation.id, action: draft.action, targetType: createdEntity ? (draft.action.includes('refund') ? 'refund' : 'expense') : ['existing', 'existing_refund'].includes(draft.action) ? (draft.action === 'existing' ? 'expense' : 'refund') : draft.action === 'charge' ? 'charge' : '', targetId: createdEntity?.id || draft.target || '', chargeReference: draft.action === 'charge' ? draft.target : '', effectiveDate: operation.effectiveDate, status: 'confirmed', createdEntity: Boolean(createdEntity), confirmedAt: now, createdAt: now, updatedAt: now };
-    household.bankReconciliations.push(reconciliation); operation.classification = draft.action; operation.reviewedAt = now; operation.updatedAt = now; recordEvent('created', 'reconciliation', reconciliation.id, null, reconciliation); await save(); drafts.delete(operation.id); renderReview();
+    household.bankReconciliations.push(reconciliation); operation.classification = draft.action; operation.reviewedAt = now; operation.updatedAt = now; recordEvent('created', 'reconciliation', reconciliation.id, null, reconciliation); return reconciliation;
   }
 
   async function confirmOperation(operation) {
@@ -400,6 +441,21 @@
     if (['refund_weekly', 'health_refund'].includes(draft.action)) created = createRefund(operation, draft.action === 'health_refund');
     if (draft.action === 'charge') updateChargeProfile(draft.target, operation.label, Boolean(draft.variable));
     await finalizeOperation(operation, draft, created);
+  }
+
+  async function confirmOperationGroup(groupKey, operations) {
+    const entries = operations.filter(operation => !activeReconciliation(operation.id) && groupForOperation(operation).key === groupKey);
+    if (!entries.length) return;
+    const selected = entries.map(operation => ({ operation, draft: draftFor(operation) }));
+    if (selected.some(({ draft }) => !draftReady(draft))) { alert('Complétez les choix de cette section avant de la valider.'); return; }
+    for (const { operation, draft } of selected) {
+      let created = null;
+      if (['weekly', 'health', 'charge', 'reserve'].includes(draft.action)) created = createExpense(operation, draft.action, draft.target);
+      if (['refund_weekly', 'health_refund'].includes(draft.action)) created = createRefund(operation, draft.action === 'health_refund');
+      if (draft.action === 'charge') updateChargeProfile(draft.target, operation.label, Boolean(draft.variable));
+      finalizeOperationData(operation, draft, created); drafts.delete(operation.id);
+    }
+    await save(); renderReview();
   }
 
   async function unpointOperation(operation) {

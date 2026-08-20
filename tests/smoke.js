@@ -525,7 +525,11 @@ try {
   const coursesRow = page.locator('.operation-row', { hasText: 'SUPER U' });
   if ((await coursesRow.locator('[data-affectation]').inputValue()) !== 'existing') throw new Error('An exact amount and compatible purchase date must suggest the existing app transaction');
   await assertContains(coursesRow.locator('.suggestion-note'), 'Le libellé manuel n’est pas comparé');
-  await coursesRow.locator('[data-confirm-operation]').click();
+  const existingGroup = page.locator('[data-operation-group="existing"]');
+  const newBudgetGroup = page.locator('[data-operation-group="new-budget"]');
+  await assertContains(existingGroup, 'Budget déjà saisi'); await assertContains(newBudgetGroup, 'Nouveau budget');
+  await existingGroup.locator('[data-confirm-group="existing"]').click();
+  await existingGroup.waitFor({ state: 'detached' });
   await page.reload({ waitUntil: 'networkidle' });
   await page.locator('#csvFile').setInputFiles({
     name: 'controle-suivant.csv',
@@ -536,12 +540,13 @@ try {
   await page.locator('#importButton').click();
   const pharmacyRow = page.locator('.operation-row', { hasText: 'Pharmacie' });
   if ((await pharmacyRow.locator('[data-affectation]').inputValue()) !== 'weekly') throw new Error('An unmatched debit must default to a new weekly expense');
-  await pharmacyRow.locator('[data-confirm-operation]').click();
+  await page.locator('[data-operation-group="new-budget"] [data-confirm-group="new-budget"]').click();
+  await page.locator('[data-operation-group="new-budget"]').waitFor({ state: 'detached' });
   const reconciliationState = await page.evaluate(async () => { const saved = await RebootSecureStorage.read('reboot-local-v1', 'reboot-local-v1'); return { pointed: saved.bankReconciliations.filter(item => !item.deletedAt).length, courses: saved.expenses.filter(item => !item.deletedAt && item.label.includes('Courses')).length, pharmacy: saved.expenses.filter(item => !item.deletedAt && item.label === 'Pharmacie').length }; });
   if (reconciliationState.pointed !== 2 || reconciliationState.courses !== 1 || reconciliationState.pharmacy !== 1) throw new Error(`Pointing must preserve an existing transaction and create only the forgotten one: ${JSON.stringify(reconciliationState)}`);
   await page.goto(`${baseUrl}/app.html`, { waitUntil: 'networkidle' });
   await assertContains(page.locator('#remaining'), '302,61');
-  console.log('PASS local CSV verification matches manual entries by amount and date without requiring similar labels, while retaining pointings and creating only confirmed forgotten expenses');
+  console.log('PASS bank decisions are grouped and each ready section can be validated in one action without duplicating existing expenses');
 
   await page.locator('#addExpenseButton').click(); await page.locator('#expenseAmount').fill('7'); await page.locator('#expenseLabel').fill('Boulangerie'); await page.locator('.nature-choice', { hasText: 'Plaisir' }).click(); await page.locator('input[name="funding"][value="annualized"]').check(); await page.locator('#saveAsShortcut').check(); await page.locator('#saveExpenseButton').click(); await page.locator('#expenseDialog').waitFor({ state: 'hidden' });
   await page.locator('#addExpenseButton').click(); const shortcut = page.locator('[data-shortcut]', { hasText: 'Boulangerie' }); await shortcut.click();

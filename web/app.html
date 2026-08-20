@@ -5,13 +5,13 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="theme-color" content="#B8325D">
   <meta name="description" content="REBOOT, le suivi du budget du foyer semaine après semaine.">
-  <meta name="reboot-build" content="2026-08-20-bank-manual-match-1">
+  <meta name="reboot-build" content="2026-08-20-bank-group-review-1">
   <link rel="icon" href="icons/favicon.ico" sizes="any">
   <link rel="icon" href="icons/favicon-32.png" type="image/png" sizes="32x32">
   <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
   <link rel="manifest" href="manifest.webmanifest">
-  <link rel="stylesheet" href="app.css?v=54">
-  <link rel="stylesheet" href="brand-theme.css?v=54">
+  <link rel="stylesheet" href="app.css?v=55">
+  <link rel="stylesheet" href="brand-theme.css?v=55">
   <title>REBOOT — Semaine</title>
 </head>
 <body class="app-loading">
@@ -80,6 +80,6 @@
 
   <dialog id="settingsDialog" class="dialog"><form method="dialog" id="settingsForm" novalidate><div class="dialog-header"><div><p class="kicker">Réglages</p><h2>Votre foyer</h2></div><button class="close-button" formnovalidate value="cancel" type="submit">×</button></div><div class="field"><label for="householdName">Nom du foyer</label><input id="householdName" type="text" maxlength="60"></div><div class="field"><label for="weeklyBudget">Budget hebdomadaire avant réserves</label><div class="money-input"><input id="weeklyBudget" type="number" min="0" step="0.01" required><span>€</span></div><small class="field-help" id="weeklyBudgetHelp"></small></div><div class="field"><label for="rebootDay">Jour REBOOT</label><select id="rebootDay" required><option value="">Choisir un jour</option><option value="1">Lundi</option><option value="2">Mardi</option><option value="3">Mercredi</option><option value="4">Jeudi</option><option value="5">Vendredi</option><option value="6">Samedi</option><option value="0">Dimanche</option></select></div><div class="choice-list"><a class="choice" href="sauvegarde.html"><span><strong>Sauvegardes</strong><small>Créer ou restaurer un fichier.</small></span></a><a class="choice" href="drive.html"><span><strong>Google Drive</strong><small>Voir l’état de la synchronisation.</small></span></a><a class="choice" href="historique.html"><span><strong>Journal des modifications</strong><small>Retrouver les corrections effectuées.</small></span></a><a class="choice" href="index.html?method=1#methode"><span><strong>La méthode</strong><small>Comprendre le fonctionnement de REBOOT.</small></span></a></div><div class="dialog-actions"><button class="button button-secondary" formnovalidate value="cancel" type="submit">Annuler</button><button class="button button-primary" value="default" type="submit">Enregistrer</button></div></form></dialog>
 
-  <script src="secure-storage.js?v=54" defer></script><script src="archive.js?v=54" defer></script><script src="drive.js?v=54" defer></script><script src="budget-engine.js?v=54" defer></script><script src="app.js?v=54" defer></script>
+  <script src="secure-storage.js?v=55" defer></script><script src="archive.js?v=55" defer></script><script src="drive.js?v=55" defer></script><script src="budget-engine.js?v=55" defer></script><script src="app.js?v=55" defer></script>
 </body>
 </html>

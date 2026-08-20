@@ -9,10 +9,10 @@
   <link rel="icon" href="icons/favicon.ico" sizes="any">
   <link rel="icon" href="icons/favicon-32.png" type="image/png" sizes="32x32">
   <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
-  <link rel="stylesheet" href="app.css?v=54">
-  <link rel="stylesheet" href="app-shell.css?v=54">
-  <link rel="stylesheet" href="brand-theme.css?v=54">
-  <link rel="stylesheet" href="verifier.css?v=54">
+  <link rel="stylesheet" href="app.css?v=55">
+  <link rel="stylesheet" href="app-shell.css?v=55">
+  <link rel="stylesheet" href="brand-theme.css?v=55">
+  <link rel="stylesheet" href="verifier.css?v=55">
 </head>
 <body>
   <header class="reboot-nav">
@@ -43,7 +43,6 @@
       <p id="reviewLead">Importez un relevé pour commencer.</p>
       <div id="summary" class="summary hidden" aria-live="polite"></div>
       <div class="operation-table hidden" id="operationTable">
-        <div class="operation-head" aria-hidden="true"><span>Date banque</span><span>Date achat</span><span>Description</span><span>Montant</span><span>Affectation</span><span>Cible</span><span></span></div>
         <div id="operationList" class="operation-list"></div>
       </div>
       <div id="reviewEmpty" class="review-empty"><img src="pictures/sleepy.png" alt="" aria-hidden="true"><strong>Rien à pointer pour le moment.</strong><span>Un prochain import complétera cette liste.</span></div>
@@ -54,10 +53,10 @@
 
   <dialog id="spreadImportDialog" class="verify-dialog"><form method="dialog" id="spreadImportForm"><div class="dialog-head"><div><p class="kicker">Opération importée</p><h2>Répartir sur plusieurs semaines</h2></div><button value="cancel" formnovalidate aria-label="Fermer">×</button></div><p id="spreadImportOperation"></p><div class="mapping spread-mapping"><label>Nombre de semaines<select id="spreadImportWeeks"><option value="2">2 semaines</option><option value="3">3 semaines</option><option value="4">4 semaines</option><option value="5">5 semaines</option><option value="6">6 semaines</option><option value="7">7 semaines</option><option value="8">8 semaines</option><option value="9">9 semaines</option><option value="10">10 semaines</option><option value="11">11 semaines</option><option value="12">12 semaines</option></select></label><label>Début<select id="spreadImportStart"><option value="dated">Semaine de l’achat</option><option value="current">Cette semaine</option><option value="next">Semaine prochaine</option></select></label></div><div id="spreadImportPreview" class="notice"></div><div class="dialog-actions"><button class="button button-secondary" value="cancel" formnovalidate>Annuler</button><button class="button button-primary" id="spreadImportSave" value="default">Enregistrer l’étalement</button></div></form></dialog>
 
-  <script src="secure-storage.js?v=54" defer></script>
-  <script src="archive.js?v=54" defer></script>
-  <script src="drive.js?v=54" defer></script>
-  <script src="budget-engine.js?v=54" defer></script>
-  <script src="verifier.js?v=54" defer></script>
+  <script src="secure-storage.js?v=55" defer></script>
+  <script src="archive.js?v=55" defer></script>
+  <script src="drive.js?v=55" defer></script>
+  <script src="budget-engine.js?v=55" defer></script>
+  <script src="verifier.js?v=55" defer></script>
 </body>
 </html>
