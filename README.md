@@ -2,6 +2,8 @@
 
 Application web local-first pour suivre le budget hebdomadaire d'un foyer. L’APP compacte regroupe la semaine en cours, les mouvements, les charges et les réserves, dont une réserve Santé créée par défaut. Un broker OAuth minimal permet une autorisation Google Drive durable, sans recevoir les données financières.
 
+L’écran **Vérifier** importe un relevé bancaire localement et prépare un pointage explicite : il détecte une date d’achat `JJ/MM` dans le libellé, suggère une transaction déjà saisie ou une charge connue, et n’applique rien au budget avant confirmation. Les opérations pointées, les associations apprises et les raccourcis de saisie sont conservés avec le budget et fusionnés par la synchronisation Drive.
+
 ## Structure
 
 - `web/` : application exécutable, calculateur, PWA et ressources servies par Nginx.

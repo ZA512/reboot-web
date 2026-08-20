@@ -1,4 +1,4 @@
-const CACHE_NAME = 'reboot-shell-v51';
+const CACHE_NAME = 'reboot-shell-v52';
 const SHELL = [
   './app.html',
   './version.txt',
@@ -6,7 +6,9 @@ const SHELL = [
   './brand-theme.css',
   './app-shell.css',
   './data-page.css',
+  './verifier.css',
   './app.js',
+  './verifier.js',
   './budget-engine.js',
   './entry.js',
   './secure-storage.js',

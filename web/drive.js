@@ -38,7 +38,7 @@
   function hasMeaningfulDailyState(daily = {}) {
     if (!daily || typeof daily !== 'object') return false;
     if (daily.configured || daily.onboarding?.storage || daily.budgetSource || daily.calculatorBudget || (daily.householdName && daily.householdName !== 'Notre foyer')) return true;
-    if (['expenses', 'refunds', 'reserveTransfers', 'importedBankOperations', 'weeklyCycles', 'allocations'].some(key => Array.isArray(daily[key]) && daily[key].some(item => item && !item.deletedAt))) return true;
+    if (['expenses', 'refunds', 'reserveTransfers', 'importedBankOperations', 'bankReconciliations', 'bankChargeProfiles', 'shortcuts', 'weeklyCycles', 'allocations'].some(key => Array.isArray(daily[key]) && daily[key].some(item => item && !item.deletedAt))) return true;
     return hasMeaningfulReserve(daily.reserves);
   }
   function hasMeaningfulCalculatorState(calculator = {}) {
@@ -62,6 +62,9 @@
       reserveTransfers: purgeTombstones(mergeList(local.reserveTransfers, remote.reserveTransfers, item => item.id), retentionDays),
       auditEvents: mergeList(local.auditEvents, remote.auditEvents, item => item.id),
       importedBankOperations: mergeList(local.importedBankOperations, remote.importedBankOperations, item => item.fingerprint || item.id),
+      bankReconciliations: purgeTombstones(mergeList(local.bankReconciliations, remote.bankReconciliations, item => item.id), retentionDays),
+      bankChargeProfiles: purgeTombstones(mergeList(local.bankChargeProfiles, remote.bankChargeProfiles, item => item.chargeReference || item.id), retentionDays),
+      shortcuts: purgeTombstones(mergeList(local.shortcuts, remote.shortcuts, item => item.id), retentionDays),
       weeklyCycles: purgeTombstones(mergeList(local.weeklyCycles, remote.weeklyCycles, item => item.id), retentionDays),
       allocations: purgeTombstones(mergeList(local.allocations, remote.allocations, item => item.id), retentionDays),
       bankImportMapping: mapping,
@@ -98,7 +101,7 @@
   function prepareSyncStates(states, owner) {
     const copy = JSON.parse(JSON.stringify(states || {})), daily = copy.daily;
     if (daily) {
-      ['expenses', 'refunds', 'reserves', 'reserveTransfers', 'auditEvents', 'importedBankOperations', 'weeklyCycles', 'allocations'].forEach(name => {
+      ['expenses', 'refunds', 'reserves', 'reserveTransfers', 'auditEvents', 'importedBankOperations', 'bankReconciliations', 'bankChargeProfiles', 'shortcuts', 'weeklyCycles', 'allocations'].forEach(name => {
         if (Array.isArray(daily[name])) daily[name] = daily[name].map(item => stampItem(item, owner));
       });
       const dailyStamp = stampItem(daily, owner);

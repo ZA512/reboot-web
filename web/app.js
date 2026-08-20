@@ -19,7 +19,7 @@ let movementFilter = 'all';
 let trackingWeeks = 52;
 let driveStatus = null;
 
-const defaultState = () => ({ householdName: 'Notre foyer', configured: false, baseWeeklyBudgetMinor: 0, weeklyBudgetMinor: 0, rebootDay: null, expenses: [], refunds: [], reserves: [], reserveTransfers: [], importedBankOperations: [], weeklyCycles: [], allocations: [], auditEvents: [], backupStatus: {}, onboarding: null });
+const defaultState = () => ({ householdName: 'Notre foyer', configured: false, baseWeeklyBudgetMinor: 0, weeklyBudgetMinor: 0, rebootDay: null, expenses: [], refunds: [], reserves: [], reserveTransfers: [], importedBankOperations: [], bankReconciliations: [], bankChargeProfiles: [], shortcuts: [], weeklyCycles: [], allocations: [], auditEvents: [], backupStatus: {}, onboarding: null });
 const createId = () => crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
 const snapshot = value => JSON.parse(JSON.stringify(value));
 const escapeHtml = value => String(value ?? '').replace(/[&<>"']/g, character => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' }[character]));
@@ -29,7 +29,7 @@ const formatMoney = minor => currency.format((Number(minor) || 0) / 100);
 const eurosToMinor = value => { const normalized = String(value ?? '').trim().replace(',', '.'); if (!normalized || !/^\d+(\.\d{1,2})?$/.test(normalized)) return 0; const [euros, cents = ''] = normalized.split('.'); return Number(euros) * 100 + Number((cents + '00').slice(0, 2)); };
 
 function ensureHealthReserve() {
-  state.expenses ||= []; state.refunds ||= []; state.reserves ||= []; state.reserveTransfers ||= []; state.weeklyCycles ||= []; state.allocations ||= []; state.auditEvents ||= []; state.backupStatus ||= {};
+  state.expenses ||= []; state.refunds ||= []; state.reserves ||= []; state.reserveTransfers ||= []; state.importedBankOperations ||= []; state.bankReconciliations ||= []; state.bankChargeProfiles ||= []; state.shortcuts ||= []; state.weeklyCycles ||= []; state.allocations ||= []; state.auditEvents ||= []; state.backupStatus ||= {};
   let health = state.reserves.find(reserve => reserve.kind === 'health');
   if (!health) {
     health = { id: createId(), name: 'Santé', kind: 'health', initialBalanceMinor: 0, openedOn: dateKey(new Date()), real: false, includedInCalculatorBudget: true, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
@@ -316,19 +316,56 @@ async function saveCalculator() { if (!calculatorState) calculatorState = { mode
 function render() { renderWeek(); renderMovements(); renderReserves(); renderCharges(); renderTracking(); updateSettingsFields(); }
 function showView() { const requested = location.hash.replace('#', '') || 'week', view = ['week', 'movements', 'charges', 'reserves', 'tracking'].includes(requested) ? requested : 'week'; $$('[data-view-panel]').forEach(panel => panel.classList.toggle('hidden', panel.dataset.viewPanel !== view)); $$('[data-view]').forEach(link => link.setAttribute('aria-current', link.dataset.view === view ? 'page' : 'false')); document.title = `REBOOT — ${{ week: 'Semaine', movements: 'Mouvements', charges: 'Charges', reserves: 'Réserves', tracking: 'Suivi' }[view]}`; if (view === 'charges') renderCharges(); if (view === 'movements') renderMovements(); if (view === 'tracking') renderTracking(); window.scrollTo({ top: 0, behavior: 'instant' }); }
 
+function ensureShortcutField() {
+  if ($('#shortcutSaveField')) return;
+  const field = document.createElement('div'); field.className = 'field'; field.id = 'shortcutSaveField'; field.innerHTML = '<label class="toggle"><input id="saveAsShortcut" name="saveAsShortcut" type="checkbox"><span class="toggle-track"></span><span>Mémoriser comme raccourci</span></label><small class="field-help">Le libellé, la nature, le financement, la réserve et l’étalement seront repris au prochain clic.</small>';
+  $('#expenseForm .dialog-actions').before(field);
+}
+
 function openExpenseDialog(expense = null, health = false) {
-  editingExpenseId = expense?.id || null; $('#expenseForm').reset(); populateReserveOptions(); renderRecentLabels();
+  ensureShortcutField(); editingExpenseId = expense?.id || null; $('#expenseForm').reset(); populateReserveOptions(); renderRecentLabels();
   const allocations = expense ? activeAllocations(expense.id).sort((a, b) => a.sequence - b.sequence) : [], lockedSpread = allocations.length > 1, isHealth = Boolean(expense?.health || health);
   $('#expenseHealth').checked = isHealth; $('#fundingField').classList.toggle('hidden', isHealth); $('#expenseDialogKicker').textContent = expense ? 'Correction' : isHealth ? 'Réserve Santé' : 'Nouvelle dépense'; $('#expenseDialogTitle').textContent = expense ? 'Modifier le montant' : isHealth ? 'Ajouter une dépense Santé' : 'Ajouter un montant'; $('#saveExpenseButton').textContent = expense ? 'Enregistrer les modifications' : 'Enregistrer'; $('#expenseDate').value = expense?.date || dateKey(new Date());
   if (expense) { $('#expenseAmount').value = (expense.amountMinor / 100).toFixed(2); $('#expenseLabel').value = expense.label; const funding = document.querySelector(`input[name="funding"][value="${expense.funding}"]`); if (funding) funding.checked = true; $('#expenseReserve').value = expense.reserveId || ''; const nature = document.querySelector(`input[name="nature"][value="${expense.nature || ''}"]`); if (nature) nature.checked = true; }
   document.querySelector(`input[name="spreadMode"][value="${lockedSpread ? 'spread' : 'once'}"]`).checked = true;
   if (lockedSpread) { $('#spreadWeeks').value = String(allocations.length); const currentStart = allocationCycleStart(dateKey(new Date())); $('#spreadStart').value = allocations[0].cycleStart > currentStart ? 'next' : 'current'; }
+  $('#shortcutSaveField').classList.toggle('hidden', Boolean(expense)); $('#saveAsShortcut').checked = false;
   ['expenseAmount', 'expenseDate', 'expenseHealth'].forEach(id => { $(`#${id}`).disabled = lockedSpread; }); $$('input[name="funding"], input[name="spreadMode"]').forEach(input => { input.disabled = lockedSpread; }); $('#spreadWeeks').disabled = lockedSpread; $('#spreadStart').disabled = lockedSpread; $('#spreadLock').classList.toggle('hidden', !lockedSpread);
   toggleReserveChoice(); updateSpreadControls(); $('#expenseDialog').showModal(); (lockedSpread ? $('#expenseLabel') : $('#expenseAmount')).focus();
 }
 function populateReserveOptions() { const reserves = state.reserves.filter(reserve => reserve.kind !== 'health' && !reserve.closedAt); $('#expenseReserve').innerHTML = reserves.map(reserve => `<option value="${reserve.id}">${escapeHtml(reserve.name)} · ${formatMoney(reserveBalance(reserve))}</option>`).join('') || '<option value="">Aucune réserve</option>'; $('#reserveFundingChoice').classList.toggle('hidden', !reserves.length); }
 function toggleReserveChoice() { const health = $('#expenseHealth').checked; $('#fundingField').classList.toggle('hidden', health); $('#reserveChoice').classList.toggle('hidden', health || document.querySelector('input[name="funding"]:checked')?.value !== 'reserve'); updateSpreadControls(); }
-function renderRecentLabels() { const labels = [...new Set(state.expenses.filter(item => !item.deletedAt).sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt))).map(item => item.label).filter(Boolean))].slice(0, 4); $('#recentLabels').innerHTML = labels.map(label => `<button class="recent-label" type="button" data-label="${escapeHtml(label)}">${escapeHtml(label)}</button>`).join(''); $('#recentLabels').querySelectorAll('[data-label]').forEach(button => button.onclick = () => { $('#expenseLabel').value = button.dataset.label; }); }
+function normalizeShortcutLabel(value) { return String(value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim(); }
+function applyShortcut(shortcut) {
+  $('#expenseLabel').value = shortcut.label || '';
+  const nature = document.querySelector(`input[name="nature"][value="${shortcut.nature || ''}"]`); if (nature) nature.checked = true;
+  $('#expenseHealth').checked = Boolean(shortcut.health);
+  const funding = document.querySelector(`input[name="funding"][value="${shortcut.funding || 'weekly'}"]`); if (funding) funding.checked = true;
+  if (shortcut.reserveId && [...$('#expenseReserve').options].some(option => option.value === shortcut.reserveId)) $('#expenseReserve').value = shortcut.reserveId;
+  const spreadMode = shortcut.spreadMode === 'spread' ? 'spread' : 'once', spread = document.querySelector(`input[name="spreadMode"][value="${spreadMode}"]`); if (spread) spread.checked = true;
+  if (shortcut.spreadWeeks) $('#spreadWeeks').value = String(shortcut.spreadWeeks); if (shortcut.spreadStart) $('#spreadStart').value = shortcut.spreadStart;
+  toggleReserveChoice(); updateSpreadControls(); $('#expenseAmount').focus();
+}
+async function deleteShortcut(id) {
+  const shortcut = state.shortcuts.find(item => item.id === id && !item.deletedAt); if (!shortcut || !confirm(`Supprimer le raccourci « ${shortcut.label} » ?`)) return;
+  const before = snapshot(shortcut), now = new Date().toISOString(); shortcut.deletedAt = now; shortcut.updatedAt = now; recordEvent('deleted', 'shortcut', shortcut.id, before, shortcut); await saveState(); renderRecentLabels();
+}
+function renderRecentLabels() {
+  const shortcuts = state.shortcuts.filter(item => !item.deletedAt).sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt)));
+  const shortcutNames = new Set(shortcuts.map(item => normalizeShortcutLabel(item.label)));
+  const labels = [...new Set(state.expenses.filter(item => !item.deletedAt && !shortcutNames.has(normalizeShortcutLabel(item.label))).sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt))).map(item => item.label).filter(Boolean))].slice(0, Math.max(0, 4 - shortcuts.length));
+  $('#recentLabels').innerHTML = shortcuts.map(item => `<span class="shortcut-chip"><button type="button" data-shortcut="${item.id}" title="Appliquer tous les choix mémorisés">★ ${escapeHtml(item.label)}</button><button type="button" class="shortcut-delete" data-delete-shortcut="${item.id}" aria-label="Supprimer le raccourci ${escapeHtml(item.label)}">×</button></span>`).join('') + labels.map(label => `<button class="recent-label" type="button" data-label="${escapeHtml(label)}">${escapeHtml(label)}</button>`).join('');
+  $('#recentLabels').querySelectorAll('[data-shortcut]').forEach(button => button.onclick = () => { const shortcut = state.shortcuts.find(item => item.id === button.dataset.shortcut && !item.deletedAt); if (shortcut) applyShortcut(shortcut); });
+  $('#recentLabels').querySelectorAll('[data-delete-shortcut]').forEach(button => button.onclick = () => deleteShortcut(button.dataset.deleteShortcut));
+  $('#recentLabels').querySelectorAll('[data-label]').forEach(button => button.onclick = () => { $('#expenseLabel').value = button.dataset.label; });
+}
+function rememberShortcut(expense, form) {
+  if (form.get('saveAsShortcut') !== 'on') return;
+  const normalizedLabel = normalizeShortcutLabel(expense.label), now = new Date().toISOString(); let shortcut = state.shortcuts.find(item => !item.deletedAt && item.normalizedLabel === normalizedLabel);
+  const value = { label: expense.label, normalizedLabel, health: Boolean(expense.health), funding: expense.funding, reserveId: expense.reserveId || '', reserveName: expense.reserveName || '', nature: expense.nature || '', spreadMode: form.get('spreadMode') === 'spread' ? 'spread' : 'once', spreadWeeks: Number(form.get('spreadWeeks') || 1), spreadStart: String(form.get('spreadStart') || 'current'), updatedAt: now };
+  if (shortcut) { const before = snapshot(shortcut); Object.assign(shortcut, value); recordEvent('updated', 'shortcut', shortcut.id, before, shortcut); }
+  else { shortcut = { id: createId(), ...value, createdAt: now }; state.shortcuts.push(shortcut); recordEvent('created', 'shortcut', shortcut.id, null, shortcut); }
+}
 function spreadDraft() {
   const amountMinor = eurosToMinor($('#expenseAmount').value), weeks = Number($('#spreadWeeks').value || 2), startMode = $('#spreadStart').value, currentStart = allocationCycleStart(dateKey(new Date())), firstStart = startMode === 'next' ? RebootBudgetEngine.addDays(currentStart, 7) : currentStart;
   return RebootBudgetEngine.splitAmountMinor(amountMinor, weeks).map((part, index) => ({ transactionId: 'draft', cycleStart: RebootBudgetEngine.addDays(firstStart, index * 7), amountMinor: part }));
@@ -348,7 +385,7 @@ async function saveExpense(event) {
   const health = lockedSpread ? existing.health : form.get('health') === 'on', funding = lockedSpread ? existing.funding : health ? 'health' : String(form.get('funding') || 'weekly'), reserve = state.reserves.find(item => item.id === form.get('reserve')); if (funding === 'reserve' && !reserve && !lockedSpread) return;
   const expense = lockedSpread ? { ...existing, label, nature: String(form.get('nature') || ''), updatedAt: new Date().toISOString() } : { id: existing?.id || createId(), date: String(form.get('date') || dateKey(new Date())), createdAt: existing?.createdAt || new Date().toISOString(), updatedAt: new Date().toISOString(), amountMinor, label, funding, reserveId: reserve?.id || '', reserveName: reserve?.name || '', nature: String(form.get('nature') || ''), health };
   if (existing) { const before = snapshot(existing); Object.assign(existing, expense); if (!lockedSpread) { const deletedAt = new Date().toISOString(), spread = form.get('spreadMode') === 'spread'; existingAllocations.forEach(item => { item.deletedAt = deletedAt; item.updatedAt = deletedAt; }); if (expense.funding === 'weekly') state.allocations.push(...createAllocations(expense, spread ? Number(form.get('spreadWeeks')) : 1, spread ? String(form.get('spreadStart')) : 'current')); } recordEvent('updated', 'expense', existing.id, before, existing); }
-  else { state.expenses.push(expense); if (expense.funding === 'weekly') { const spread = form.get('spreadMode') === 'spread'; state.allocations.push(...createAllocations(expense, spread ? Number(form.get('spreadWeeks')) : 1, spread ? String(form.get('spreadStart')) : 'current')); } recordEvent('created', 'expense', expense.id, null, expense); }
+  else { state.expenses.push(expense); if (expense.funding === 'weekly') { const spread = form.get('spreadMode') === 'spread'; state.allocations.push(...createAllocations(expense, spread ? Number(form.get('spreadWeeks')) : 1, spread ? String(form.get('spreadStart')) : 'current')); } recordEvent('created', 'expense', expense.id, null, expense); rememberShortcut(expense, form); }
   await saveState(); $('#expenseDialog').close(); render();
 }
 function deleteExpense(id) { const expense = state.expenses.find(item => item.id === id); if (!expense) return; const allocations = activeAllocations(id), label = expense.label || 'cette dépense'; const message = allocations.length > 1 ? `Supprimer « ${label} » et ses ${allocations.length} affectations hebdomadaires ?` : `Supprimer « ${label} » ?`; if (!confirm(message)) return; const before = snapshot(expense), deletedAt = new Date().toISOString(); expense.deletedAt = deletedAt; expense.updatedAt = deletedAt; allocations.forEach(item => { item.deletedAt = deletedAt; item.updatedAt = deletedAt; }); recordEvent('deleted', 'expense', id, before, expense); saveState(); render(); }
@@ -497,7 +534,7 @@ $('#syncNow').onclick = () => driveStatus?.state === 'reauth_required' ? window.
 
 (async function init() {
   try {
-    if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js?v=51', { updateViaCache: 'none' }).catch(() => {});
+    if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js?v=52', { updateViaCache: 'none' }).catch(() => {});
     // Drive starts its synchronization when drive.js loads. Render the encrypted local snapshot first so network latency never hides the budget.
     state = await loadState(); state.baseWeeklyBudgetMinor ||= state.weeklyBudgetMinor || 0; state.configured = Boolean(state.baseWeeklyBudgetMinor > 0 && state.rebootDay !== null && state.rebootDay !== undefined && state.rebootDay !== ''); const beforeWeeklyModel = JSON.stringify([state.weeklyCycles || [], state.allocations || []]), migrated = ensureHealthReserve(); synchronizeWeeklyModel(); if (migrated || beforeWeeklyModel !== JSON.stringify([state.weeklyCycles, state.allocations])) await saveState(); await refreshCalculatorStatus(); render(); showView(); const syncShown = showSyncCompleteNotice(); prepareWelcomeDialog(); if (!state.configured && !state.onboarding?.storage && !syncShown) $('#welcomeDialog').showModal(); finishInitialLoad();
   } catch (error) { state = defaultState(); ensureHealthReserve(); storageError = error?.message || 'Coffre local indisponible'; render(); showView(); $('#welcomeDialog').showModal(); finishInitialLoad(); }

@@ -279,10 +279,10 @@ try {
   });
   if (plainArchive.archive.format !== 'reboot-plain-archive' || !plainArchive.payload.states) throw new Error('Simple Drive mode must create a readable archive');
   const mergedStates = await page.evaluate(() => RebootDrive.mergeStates(
-    { daily: { updatedAt: '2026-08-01T10:00:00.000Z', expenses: [{ id: 'shared', amountMinor: 100, updatedAt: '2026-08-01T10:00:00.000Z' }], reserves: [{ id: 'local', name: 'Canapé', updatedAt: '2026-08-01T10:00:00.000Z' }], allocations: [{ id: 'allocation-local', transactionId: 'shared', amountMinor: 100, updatedAt: '2026-08-01T10:00:00.000Z' }] }, calculator: { updatedAt: '2026-08-01T10:00:00.000Z', manualMonthly: [{ name: 'Local' }] } },
-    { daily: { updatedAt: '2026-08-02T10:00:00.000Z', expenses: [{ id: 'shared', amountMinor: 200, updatedAt: '2026-08-02T10:00:00.000Z' }, { id: 'remote', amountMinor: 300, updatedAt: '2026-08-02T10:00:00.000Z' }], refunds: [{ id: 'refund', amountMinor: 50, createdAt: '2026-08-02T10:00:00.000Z' }], weeklyCycles: [{ id: 'cycle-2026-08-01', startDate: '2026-08-01', budgetMinor: 60000, updatedAt: '2026-08-02T10:00:00.000Z' }] }, calculator: { updatedAt: '2026-08-02T10:00:00.000Z', manualMonthly: [{ name: 'Distant' }] } }
+    { daily: { updatedAt: '2026-08-01T10:00:00.000Z', expenses: [{ id: 'shared', amountMinor: 100, updatedAt: '2026-08-01T10:00:00.000Z' }], reserves: [{ id: 'local', name: 'Canapé', updatedAt: '2026-08-01T10:00:00.000Z' }], allocations: [{ id: 'allocation-local', transactionId: 'shared', amountMinor: 100, updatedAt: '2026-08-01T10:00:00.000Z' }], shortcuts: [{ id: 'shortcut-local', label: 'Courses', updatedAt: '2026-08-01T10:00:00.000Z' }] }, calculator: { updatedAt: '2026-08-01T10:00:00.000Z', manualMonthly: [{ name: 'Local' }] } },
+    { daily: { updatedAt: '2026-08-02T10:00:00.000Z', expenses: [{ id: 'shared', amountMinor: 200, updatedAt: '2026-08-02T10:00:00.000Z' }, { id: 'remote', amountMinor: 300, updatedAt: '2026-08-02T10:00:00.000Z' }], refunds: [{ id: 'refund', amountMinor: 50, createdAt: '2026-08-02T10:00:00.000Z' }], bankReconciliations: [{ id: 'reconciliation-remote', bankOperationId: 'bank-1', updatedAt: '2026-08-02T10:00:00.000Z' }], bankChargeProfiles: [{ id: 'profile-remote', chargeReference: 'manual|0', updatedAt: '2026-08-02T10:00:00.000Z' }], weeklyCycles: [{ id: 'cycle-2026-08-01', startDate: '2026-08-01', budgetMinor: 60000, updatedAt: '2026-08-02T10:00:00.000Z' }] }, calculator: { updatedAt: '2026-08-02T10:00:00.000Z', manualMonthly: [{ name: 'Distant' }] } }
   ));
-  if (mergedStates.daily.expenses.length !== 2 || mergedStates.daily.expenses.find(expense => expense.id === 'shared')?.amountMinor !== 200 || mergedStates.daily.reserves.length !== 1 || mergedStates.daily.refunds.length !== 1 || mergedStates.daily.allocations.length !== 1 || mergedStates.daily.weeklyCycles.length !== 1 || mergedStates.calculator.manualMonthly[0].name !== 'Distant') throw new Error('Multi-device state merge must preserve independent entries, allocations, cycles and newest edits');
+  if (mergedStates.daily.expenses.length !== 2 || mergedStates.daily.expenses.find(expense => expense.id === 'shared')?.amountMinor !== 200 || mergedStates.daily.reserves.length !== 1 || mergedStates.daily.refunds.length !== 1 || mergedStates.daily.allocations.length !== 1 || mergedStates.daily.shortcuts.length !== 1 || mergedStates.daily.bankReconciliations.length !== 1 || mergedStates.daily.bankChargeProfiles.length !== 1 || mergedStates.daily.weeklyCycles.length !== 1 || mergedStates.calculator.manualMonthly[0].name !== 'Distant') throw new Error('Multi-device state merge must preserve independent entries, pointings, shortcuts, allocations, cycles and newest edits');
   const protectedStates = await page.evaluate(() => RebootDrive.mergeStates(
     { daily: { updatedAt: '2026-08-01T10:00:00.000Z', configured: true, householdName: 'Notre foyer', baseWeeklyBudgetMinor: 50000, weeklyBudgetMinor: 50000, rebootDay: 1 }, calculator: { updatedAt: '2026-08-01T10:00:00.000Z', manualMonthly: [{ name: 'Internet', amount: 30 }] } },
     { daily: { updatedAt: '2026-08-13T10:00:00.000Z', configured: false, householdName: 'Notre foyer', reserves: [{ kind: 'health', name: 'Santé', initialBalanceMinor: 0 }] }, calculator: { updatedAt: '2026-08-13T10:00:00.000Z', manualMonthly: [] } }
@@ -510,23 +510,38 @@ try {
   await page.locator('#csvFile').setInputFiles({
     name: 'controle.csv',
     mimeType: 'text/csv',
-    buffer: Buffer.from(`Date;Libellé;Montant\n${todayText};Courses;-42\n${todayText};Pharmacie;-65\n`)
+    buffer: Buffer.from(`Date;Libellé;Montant\n${todayText};CB ${String(today.getDate()).padStart(2, '0')}/${String(today.getMonth() + 1).padStart(2, '0')} Courses;-42\n${todayText};Pharmacie;-65\n`)
   });
   await page.locator('#importButton').click();
-  await page.waitForFunction(() => document.querySelector('#summary')?.textContent?.includes('2 opérations du cycle'));
+  await page.waitForFunction(() => document.querySelector('#summary')?.textContent?.includes('2opérations conservées'));
   await assertContains(page.locator('#summary'), '2');
-  await assertContains(page.locator('#operationList'), 'Rapprochée avec une dépense saisie');
+  await assertContains(page.locator('#operationList'), 'Même montant et date compatible');
+  await assertContains(page.locator('#operationList'), 'Trouvée dans le libellé');
+  const coursesRow = page.locator('.operation-row', { hasText: 'Courses' });
+  if ((await coursesRow.locator('[data-affectation]').inputValue()) !== 'existing') throw new Error('An exact amount and compatible purchase date must suggest the existing app transaction');
+  await coursesRow.locator('[data-confirm-operation]').click();
   await page.reload({ waitUntil: 'networkidle' });
   await page.locator('#csvFile').setInputFiles({
     name: 'controle-suivant.csv',
     mimeType: 'text/csv',
-    buffer: Buffer.from(`Date;Libellé;Montant\n${todayText};Courses;-42\n${todayText};Pharmacie;-65\n`)
+    buffer: Buffer.from(`Date;Libellé;Montant\n${todayText};CB ${String(today.getDate()).padStart(2, '0')}/${String(today.getMonth() + 1).padStart(2, '0')} Courses;-42\n${todayText};Pharmacie;-65\n`)
   });
-  await assertContains(page.locator('#preview'), 'Modèle de colonnes réutilisé');
-  await page.locator('[data-action="weekly"]').click();
+  await assertContains(page.locator('#importNotice'), 'Colonnes reconnues');
+  await page.locator('#importButton').click();
+  const pharmacyRow = page.locator('.operation-row', { hasText: 'Pharmacie' });
+  if ((await pharmacyRow.locator('[data-affectation]').inputValue()) !== 'weekly') throw new Error('An unmatched debit must default to a new weekly expense');
+  await pharmacyRow.locator('[data-confirm-operation]').click();
+  const reconciliationState = await page.evaluate(async () => { const saved = await RebootSecureStorage.read('reboot-local-v1', 'reboot-local-v1'); return { pointed: saved.bankReconciliations.filter(item => !item.deletedAt).length, courses: saved.expenses.filter(item => !item.deletedAt && item.label.includes('Courses')).length, pharmacy: saved.expenses.filter(item => !item.deletedAt && item.label === 'Pharmacie').length }; });
+  if (reconciliationState.pointed !== 2 || reconciliationState.courses !== 1 || reconciliationState.pharmacy !== 1) throw new Error(`Pointing must preserve an existing transaction and create only the forgotten one: ${JSON.stringify(reconciliationState)}`);
   await page.goto(`${baseUrl}/app.html`, { waitUntil: 'networkidle' });
   await assertContains(page.locator('#remaining'), '302,61');
-  console.log('PASS local CSV verification reconciles and adds a confirmed forgotten expense');
+  console.log('PASS local CSV verification extracts the purchase date, retains pointings and creates only confirmed forgotten expenses');
+
+  await page.locator('#addExpenseButton').click(); await page.locator('#expenseAmount').fill('7'); await page.locator('#expenseLabel').fill('Boulangerie'); await page.locator('.nature-choice', { hasText: 'Plaisir' }).click(); await page.locator('input[name="funding"][value="annualized"]').check(); await page.locator('#saveAsShortcut').check(); await page.locator('#saveExpenseButton').click(); await page.locator('#expenseDialog').waitFor({ state: 'hidden' });
+  await page.locator('#addExpenseButton').click(); const shortcut = page.locator('[data-shortcut]', { hasText: 'Boulangerie' }); await shortcut.click();
+  if ((await page.locator('#expenseLabel').inputValue()) !== 'Boulangerie' || !(await page.locator('input[name="nature"][value="pleasure"]').isChecked()) || !(await page.locator('input[name="funding"][value="annualized"]').isChecked())) throw new Error('A true shortcut must restore the label, nature and funding choices');
+  acceptConfirmation(page); await page.locator('[data-delete-shortcut]').click(); await page.locator('#expenseDialog .close-button').click();
+  console.log('PASS true expense shortcuts restore all choices and can be deleted with confirmation');
 
   const engineSplits = await page.evaluate(() => ({ exact: RebootBudgetEngine.splitAmountMinor(30000, 3), remainder: RebootBudgetEngine.splitAmountMinor(2800, 3) }));
   if (engineSplits.exact.join(',') !== '10000,10000,10000' || engineSplits.remainder.join(',') !== '933,933,934') throw new Error(`Weekly split must preserve every cent: ${JSON.stringify(engineSplits)}`);
@@ -557,7 +572,7 @@ try {
   await page.goto(`${baseUrl}/verifier.html`, { waitUntil: 'networkidle' });
   const spreadImportDate = new Date(), spreadImportDateText = `${String(spreadImportDate.getDate()).padStart(2, '0')}/${String(spreadImportDate.getMonth() + 1).padStart(2, '0')}/${spreadImportDate.getFullYear()}`;
   await page.locator('#csvFile').setInputFiles({ name: 'etalement.csv', mimeType: 'text/csv', buffer: Buffer.from(`Date;Libellé;Montant\n${spreadImportDateText};Achat bancaire étalé;-28\n`) });
-  await page.locator('#importButton').click(); const importRow = page.locator('.operation', { hasText: 'Achat bancaire étalé' }); await importRow.locator('[data-action="spread"]').click(); await page.locator('#spreadImportWeeks').selectOption('3'); await page.locator('#spreadImportSave').click();
+  await page.locator('#importButton').click(); const importRow = page.locator('.operation-row', { hasText: 'Achat bancaire étalé' }); await importRow.locator('[data-affectation]').selectOption('spread'); await page.locator('.operation-row', { hasText: 'Achat bancaire étalé' }).locator('[data-confirm-operation]').click(); await page.locator('#spreadImportWeeks').selectOption('3'); await page.locator('#spreadImportSave').click();
   const importedSpread = await page.evaluate(async () => { const saved = await RebootSecureStorage.read('reboot-local-v1', 'reboot-local-v1'), operation = saved.importedBankOperations.find(item => item.label === 'Achat bancaire étalé'), expense = saved.expenses.find(item => item.importedOperationId === operation.id); return { operationAmount: operation.amountMinor, operationDate: operation.date, expenseAmount: expense.amountMinor, allocations: saved.allocations.filter(item => item.transactionId === expense.id && !item.deletedAt).map(item => item.amountMinor) }; });
   if (importedSpread.operationAmount !== -2800 || importedSpread.operationDate !== `${spreadImportDate.getFullYear()}-${String(spreadImportDate.getMonth() + 1).padStart(2, '0')}-${String(spreadImportDate.getDate()).padStart(2, '0')}` || importedSpread.expenseAmount !== 2800 || importedSpread.allocations.join(',') !== '933,933,934') throw new Error('Imported spread must not alter the original bank operation');
   console.log('PASS an imported bank operation can be spread without changing its original date or amount');

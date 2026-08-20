@@ -22,7 +22,7 @@
   <script>
     const DB='reboot-local-v1',STORE='reboot-local-v1',list=document.querySelector('#list'),count=document.querySelector('#count');let state={};
     const esc=value=>String(value??'').replace(/[&<>"']/g,char=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[char]));
-    const label={expense:'Dépense',reserve:'Réserve',refund:'Remboursement',transfer:'Transfert'};
+    const label={expense:'Dépense',reserve:'Réserve',refund:'Remboursement',transfer:'Transfert',shortcut:'Raccourci',reconciliation:'Pointage bancaire'};
     const verb={created:'Ajouté',updated:'Modifié',deleted:'Supprimé',closed:'Terminé'};
     const icon={created:'+',updated:'↺',deleted:'−',closed:'✓'};
     function description(event){const data=event.after||event.before||{};const name=data.label||data.name||'Sans libellé';const amount=Number(data.amountMinor||data.monthlyContributionMinor||0);const suffix=amount?` · ${(amount/100).toLocaleString('fr-FR',{style:'currency',currency:'EUR'})}`:'';return esc(name)+suffix}
