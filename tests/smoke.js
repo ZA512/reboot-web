@@ -506,11 +506,14 @@ try {
   await assertContains(page.locator('#expenseList'), 'Courses');
   const today = new Date();
   const todayText = `${String(today.getDate()).padStart(2, '0')}/${String(today.getMonth() + 1).padStart(2, '0')}/${today.getFullYear()}`;
+  const previousDay = new Date(today); previousDay.setDate(previousDay.getDate() - 1);
+  const previousDayShort = `${String(previousDay.getDate()).padStart(2, '0')}/${String(previousDay.getMonth() + 1).padStart(2, '0')}`;
+  const unrelatedBankLabel = `Paiement par carte X2502 ${previousDayShort} UEP SUPER U`;
   await page.goto(`${baseUrl}/verifier.html`, { waitUntil: 'networkidle' });
   await page.locator('#csvFile').setInputFiles({
     name: 'controle.csv',
     mimeType: 'text/csv',
-    buffer: Buffer.from(`Téléchargement du ${todayText}\nCompte : 123456\nDate;Libellé;Montant\n${todayText};CB ${String(today.getDate()).padStart(2, '0')}/${String(today.getMonth() + 1).padStart(2, '0')} Courses;-42\n${todayText};Pharmacie;-65\nSolde disponible;;1234,56\n`)
+    buffer: Buffer.from(`Téléchargement du ${todayText}\nCompte : 123456\nDate;Libellé;Montant\n${todayText};${unrelatedBankLabel};-42\n${todayText};Pharmacie;-65\nSolde disponible;;1234,56\n`)
   });
   if ((await page.locator('#mapHeaderRow').inputValue()) !== '3') throw new Error('The bank importer must skip preamble lines and detect the real header row');
   if ((await page.locator('#mapDate').inputValue()) !== '0' || (await page.locator('#mapLabel').inputValue()) !== '1' || (await page.locator('#mapAmount').inputValue()) !== '2') throw new Error('Detected bank columns must remain selectable and be mapped automatically');
@@ -519,14 +522,15 @@ try {
   await assertContains(page.locator('#summary'), '2');
   await assertContains(page.locator('#operationList'), 'Même montant et date compatible');
   await assertContains(page.locator('#operationList'), 'Trouvée dans le libellé');
-  const coursesRow = page.locator('.operation-row', { hasText: 'Courses' });
+  const coursesRow = page.locator('.operation-row', { hasText: 'SUPER U' });
   if ((await coursesRow.locator('[data-affectation]').inputValue()) !== 'existing') throw new Error('An exact amount and compatible purchase date must suggest the existing app transaction');
+  await assertContains(coursesRow.locator('.suggestion-note'), 'Le libellé manuel n’est pas comparé');
   await coursesRow.locator('[data-confirm-operation]').click();
   await page.reload({ waitUntil: 'networkidle' });
   await page.locator('#csvFile').setInputFiles({
     name: 'controle-suivant.csv',
     mimeType: 'text/csv',
-    buffer: Buffer.from(`Export généré le ${todayText}\nDate;Libellé;Montant\n${todayText};CB ${String(today.getDate()).padStart(2, '0')}/${String(today.getMonth() + 1).padStart(2, '0')} Courses;-42\n${todayText};Pharmacie;-65\n`)
+    buffer: Buffer.from(`Export généré le ${todayText}\nDate;Libellé;Montant\n${todayText};${unrelatedBankLabel};-42\n${todayText};Pharmacie;-65\n`)
   });
   await assertContains(page.locator('#importNotice'), 'Colonnes reconnues');
   await page.locator('#importButton').click();
@@ -537,7 +541,7 @@ try {
   if (reconciliationState.pointed !== 2 || reconciliationState.courses !== 1 || reconciliationState.pharmacy !== 1) throw new Error(`Pointing must preserve an existing transaction and create only the forgotten one: ${JSON.stringify(reconciliationState)}`);
   await page.goto(`${baseUrl}/app.html`, { waitUntil: 'networkidle' });
   await assertContains(page.locator('#remaining'), '302,61');
-  console.log('PASS local CSV verification skips bank preambles, maps selectable columns, extracts the purchase date, retains pointings and creates only confirmed forgotten expenses');
+  console.log('PASS local CSV verification matches manual entries by amount and date without requiring similar labels, while retaining pointings and creating only confirmed forgotten expenses');
 
   await page.locator('#addExpenseButton').click(); await page.locator('#expenseAmount').fill('7'); await page.locator('#expenseLabel').fill('Boulangerie'); await page.locator('.nature-choice', { hasText: 'Plaisir' }).click(); await page.locator('input[name="funding"][value="annualized"]').check(); await page.locator('#saveAsShortcut').check(); await page.locator('#saveExpenseButton').click(); await page.locator('#expenseDialog').waitFor({ state: 'hidden' });
   await page.locator('#addExpenseButton').click(); const shortcut = page.locator('[data-shortcut]', { hasText: 'Boulangerie' }); await shortcut.click();

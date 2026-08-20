@@ -96,7 +96,8 @@
       const dateCompatible = operation.purchaseDate ? Math.abs(daysBetween(item.date, operation.purchaseDate)) <= 1 : dateDistance >= 0 && dateDistance <= 5;
       if (!dateCompatible) return null;
       const similarity = labelScore(operation.label, item.label), amountExact = Number(item.amountMinor) === Math.abs(Number(operation.amountMinor));
-      return { item, amountExact, score: (amountExact ? 70 : 10) + Math.round(similarity * 30) - Math.abs(operation.purchaseDate ? daysBetween(item.date, operation.purchaseDate) : dateDistance) };
+      const effectiveDistance = Math.abs(operation.purchaseDate ? daysBetween(item.date, operation.purchaseDate) : dateDistance);
+      return { item, amountExact, similarity, effectiveDistance, score: (amountExact ? 1000 : 0) - effectiveDistance * 100 + Math.round(similarity * 10) };
     }).filter(Boolean).sort((first, second) => second.score - first.score);
   }
 
@@ -130,7 +131,7 @@
 
   function suggestionFor(operation) {
     const existing = existingMovementCandidates(operation)[0];
-    if (existing?.amountExact && existing.score >= 78) return { action: operation.amountMinor > 0 ? 'existing_refund' : 'existing', target: existing.item.id, note: 'Même montant et date compatible : probablement déjà saisi.', strong: true };
+    if (existing?.amountExact) return { action: operation.amountMinor > 0 ? 'existing_refund' : 'existing', target: existing.item.id, note: 'Même montant et date compatible : probablement déjà saisi. Le libellé manuel n’est pas comparé.', strong: true };
     if (operation.amountMinor < 0) {
       const charge = chargeSuggestions(operation)[0];
       if (charge?.score >= 52) return { action: 'charge', target: charge.reference, variable: charge.profile?.mode === 'variable', note: `Charge probable : ${charge.name}. À confirmer.`, strong: charge.score >= 75 };
@@ -302,7 +303,7 @@
   function targetOptions(operation, draft) {
     if (['existing', 'existing_refund'].includes(draft.action)) {
       const entries = existingMovementCandidates(operation);
-      return `<select data-target><option value="">Choisir une transaction…</option>${entries.map(({ item, amountExact }) => `<option value="${item.id}" ${draft.target === item.id ? 'selected' : ''}>${amountExact ? '✓ ' : ''}${escapeHtml(item.label)} · ${formatDate(item.date)} · ${money(item.amountMinor)}</option>`).join('')}</select><span class="target-note">Les transactions des cinq jours précédents sont proposées ; ✓ indique le même montant.</span>`;
+      return `<select data-target><option value="">Choisir une transaction…</option>${entries.map(({ item, amountExact }) => `<option value="${item.id}" ${draft.target === item.id ? 'selected' : ''}>${amountExact ? '✓ ' : ''}${escapeHtml(item.label)} · ${formatDate(item.date)} · ${money(item.amountMinor)}</option>`).join('')}</select><span class="target-note">Le rapprochement utilise la date et le montant, pas le libellé saisi à la main ; ✓ indique le même montant.</span>`;
     }
     if (draft.action === 'charge') {
       const entries = chargeSuggestions(operation), selected = draft.target || entries[0]?.reference || ''; if (!draft.target && selected) draft.target = selected;
