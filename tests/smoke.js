@@ -293,6 +293,48 @@ try {
     { daily: { expenses: [{ id: 'deleted-expense', deletedAt: '2026-08-02T10:00:00.000Z', modifiedAt: '2026-08-02T10:00:00.000Z', modifiedBy: 'device-b' }] } }
   ));
   if (!tombstoneStates.daily.expenses.find(expense => expense.id === 'deleted-expense')?.deletedAt) throw new Error('A newer tombstone must prevent an old device from resurrecting a deleted expense');
+
+  const conflictContext = await browser.newContext({ serviceWorkers: 'block' });
+  const conflictPage = await conflictContext.newPage();
+  const remoteDatasetId = '22222222-2222-4222-8222-222222222222', staleBrokerDatasetId = '33333333-3333-4333-8333-333333333333', remoteFileId = 'remote-budget-file';
+  const remoteArchive = await page.evaluate(datasetId => RebootArchive.createFromStates({
+    daily: { householdName: 'Notre foyer', configured: true, baseWeeklyBudgetMinor: 60000, weeklyBudgetMinor: 60000, rebootDay: 6, expenses: [], refunds: [], reserves: [], reserveTransfers: [], importedBankOperations: [], bankReconciliations: [], bankChargeProfiles: [], shortcuts: [], weeklyCycles: [], allocations: [], auditEvents: [], backupStatus: {}, updatedAt: '2026-08-20T08:00:00.000Z' },
+    calculator: null
+  }, '', { encrypted: false, sync: { datasetId, revision: 8, schemaVersion: 3 } }), remoteDatasetId);
+  let brokerDatasetId = staleBrokerDatasetId, replacementRequests = 0, conflictUploads = 0;
+  await conflictContext.route('**/api/oauth/google/status', route => route.fulfill({ json: { connected: true, provider: 'google', scopes: ['https://www.googleapis.com/auth/drive.appdata'], csrf_token: 'conflict-csrf', dataset_id: brokerDatasetId, tombstone_retention_days: 90 } }));
+  await conflictContext.route('**/api/oauth/google/token', route => route.fulfill({ json: { access_token: 'conflict-token', expires_in: 3600, expires_at: Date.now() + 3600000 } }));
+  await conflictContext.route('**/api/sync/dataset/adopt', route => route.fulfill({ status: 409, json: { error: 'dataset_conflict', dataset_id: staleBrokerDatasetId, message: 'Ce compte REBOOT est déjà associé à un autre budget.' } }));
+  await conflictContext.route('**/api/sync/dataset/replace', route => { replacementRequests += 1; brokerDatasetId = remoteDatasetId; return route.fulfill({ json: { dataset_id: remoteDatasetId, replaced: true } }); });
+  await conflictContext.route('**/api/sync/lease**', route => route.request().method() === 'DELETE' ? route.fulfill({ status: 204 }) : route.fulfill({ json: { status: 'acquired', leaseId: 'conflict-lease', expiresAt: new Date(Date.now() + 15000).toISOString() } }));
+  await conflictContext.route('**/*', route => {
+    const url = new URL(route.request().url());
+    if (url.hostname !== 'www.googleapis.com') return route.fallback();
+    const headers = { 'Access-Control-Allow-Origin': '*' };
+    if (url.pathname.startsWith('/upload/drive/v3/files')) { conflictUploads += 1; return route.fulfill({ headers, json: { id: remoteFileId, name: 'reboot-data.json', version: '10' } }); }
+    if (url.searchParams.get('alt') === 'media') return route.fulfill({ headers, contentType: 'application/json', body: remoteArchive });
+    if (url.pathname.endsWith(`/${remoteFileId}`)) return route.fulfill({ headers, json: { id: remoteFileId, name: 'reboot-data.json', createdTime: '2026-08-13T10:00:00.000Z', modifiedTime: '2026-08-20T08:00:00.000Z', version: '9', appProperties: { reboot: 'plain-archive-v1' } } });
+    return route.fulfill({ headers, json: { files: [{ id: remoteFileId, name: 'reboot-data.json', createdTime: '2026-08-13T10:00:00.000Z', modifiedTime: '2026-08-20T08:00:00.000Z', version: '9', appProperties: { reboot: 'plain-archive-v1' } }] } });
+  });
+  await conflictPage.goto(`${baseUrl}/app.html`, { waitUntil: 'domcontentloaded' });
+  await conflictPage.evaluate(() => RebootDrive.initialSync());
+  await conflictPage.evaluate(async ({ remoteFileId, remoteDatasetId }) => {
+    await RebootSecureStorage.save('reboot-local-v1', { householdName: 'Notre foyer', configured: true, baseWeeklyBudgetMinor: 60000, weeklyBudgetMinor: 60000, rebootDay: 6, expenses: [{ id: 'local-unsynced', date: '2026-08-21', amountMinor: 1200, label: 'Dépense locale', funding: 'weekly', createdAt: '2026-08-21T09:00:00.000Z', updatedAt: '2026-08-21T09:00:00.000Z' }], refunds: [], reserves: [], reserveTransfers: [], importedBankOperations: [], bankReconciliations: [], bankChargeProfiles: [], shortcuts: [], weeklyCycles: [], allocations: [], auditEvents: [], backupStatus: {}, updatedAt: '2026-08-21T09:00:00.000Z' });
+    localStorage.setItem('reboot-drive-config-v2', JSON.stringify({ brokerConnected: true, driveFileId: remoteFileId, datasetId: remoteDatasetId, lastSyncAt: '2026-08-20T08:00:00.000Z', localRevision: 4, lastSyncedLocalRevision: 3, dirty: true }));
+  }, { remoteFileId, remoteDatasetId });
+  await conflictPage.reload({ waitUntil: 'domcontentloaded' });
+  await conflictPage.waitForFunction(() => { const config = JSON.parse(localStorage.getItem('reboot-drive-config-v2') || '{}'); return config.datasetSelectionRequired && config.remoteCandidates?.length; });
+  await conflictPage.locator('#welcomeDialog').waitFor({ state: 'visible' });
+  await assertContains(conflictPage.locator('#welcomeTitle'), 'budget Google Drive');
+  await conflictPage.locator('[data-use-drive-dataset]').click();
+  await conflictPage.locator('[data-replace-drive-dataset]').waitFor({ state: 'visible' });
+  await conflictPage.locator('[data-replace-drive-dataset]').click();
+  await conflictPage.waitForFunction(() => Boolean(JSON.parse(localStorage.getItem('reboot-drive-config-v2') || '{}').lastSyncAt > '2026-08-20T08:00:00.000Z'));
+  const repairedSync = await conflictPage.evaluate(async () => ({ config: JSON.parse(localStorage.getItem('reboot-drive-config-v2') || '{}'), expenses: (await RebootSecureStorage.read('reboot-local-v1', 'reboot-local-v1')).expenses.filter(item => !item.deletedAt).map(item => item.id) }));
+  if (replacementRequests !== 1 || conflictUploads < 1 || repairedSync.config.datasetId !== remoteDatasetId || repairedSync.config.datasetSelectionRequired || !repairedSync.expenses.includes('local-unsynced')) throw new Error(`A configured household must be able to repair a stale Drive dataset link without losing unsynchronized local changes: ${JSON.stringify({ replacementRequests, conflictUploads, config: repairedSync.config, expenses: repairedSync.expenses })}`);
+  await conflictContext.close();
+  console.log('PASS a configured household can confirm a stale Drive link and keep its unsynchronized local changes');
+
   await page.unroute('**/api/oauth/google/status');
   await page.unroute('**/api/oauth/google/token');
   await page.unroute('**/api/sync/lease**');

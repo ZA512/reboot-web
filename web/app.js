@@ -143,12 +143,12 @@ function renderFreshness() {
   const target = $('#freshness'); if (!target) return;
   if (storageError) { target.innerHTML = `<span class="status-dot" style="background:#d96b50"></span><span class="sync-label">Stockage indisponible</span>`; return; }
   const drive = window.RebootDrive?.config?.();
-  const syncState = driveStatus?.state;
+  const syncState = driveStatus?.state || (drive?.datasetSelectionRequired ? 'dataset_selection_required' : drive?.lastSyncErrorCode ? (drive.lastSyncErrorCode === 'sync_busy' ? 'sync_delayed' : 'sync_error') : '');
   $('#syncNow')?.classList.toggle('hidden', !drive?.configured && !['syncing', 'connected_idle', 'sync_error', 'sync_delayed', 'reauth_required'].includes(syncState));
   if (drive?.configured || ['syncing', 'connected_idle', 'sync_error', 'sync_delayed', 'reauth_required'].includes(syncState)) {
     const at = drive.lastSyncAt ? new Intl.DateTimeFormat('fr-FR', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }).format(new Date(drive.lastSyncAt)) : '';
-    const label = syncState === 'syncing' ? 'Synchronisation…' : syncState === 'reauth_required' ? 'Drive à reconnecter' : syncState === 'sync_delayed' ? 'Sync retardée' : syncState === 'sync_error' ? 'Sync en attente' : drive.syncPendingSetup ? 'Drive prêt à configurer' : `Drive synchronisé${at ? ` · ${at}` : ''}`;
-    const color = syncState === 'reauth_required' ? '#d58a22' : ['sync_error', 'sync_delayed'].includes(syncState) ? '#7b8a86' : '#0e6f67';
+    const label = syncState === 'syncing' ? 'Synchronisation…' : syncState === 'dataset_selection_required' ? 'Drive à confirmer' : syncState === 'reauth_required' ? 'Drive à reconnecter' : syncState === 'sync_delayed' ? 'Sync retardée' : syncState === 'sync_error' ? 'Sync en attente' : drive.syncPendingSetup ? 'Drive prêt à configurer' : `Drive synchronisé${at ? ` · ${at}` : ''}`;
+    const color = ['dataset_selection_required', 'reauth_required'].includes(syncState) ? '#d58a22' : ['sync_error', 'sync_delayed'].includes(syncState) ? '#7b8a86' : '#0e6f67';
     target.innerHTML = `<span class="status-dot" style="background:${color}"></span><span class="sync-label">${label}</span>`;
     return;
   }
@@ -528,14 +528,19 @@ $('#welcomeDatasetStep').onclick = async event => {
   }
 };
 window.addEventListener('hashchange', showView);
-window.addEventListener('reboot:drive-status', (event) => { driveStatus = event.detail; if (state) { renderFreshness(); if (event.detail.state === 'dataset_selection_required' && !state.configured && !state.onboarding?.storage) { prepareWelcomeDialog(); $('#welcomeDialog').showModal(); } } });
+window.addEventListener('reboot:drive-status', (event) => { driveStatus = event.detail; if (state) { renderFreshness(); if (event.detail.state === 'dataset_selection_required') { prepareWelcomeDialog(); $('#welcomeDialog').showModal(); } } });
 window.addEventListener('reboot:drive-merged', async () => { state = await loadState(); state.baseWeeklyBudgetMinor ||= state.weeklyBudgetMinor || 0; ensureHealthReserve(); synchronizeWeeklyModel(); await refreshCalculatorStatus(); render(); if (state.configured || state.onboarding?.storage) $('#welcomeDialog').close(); });
-$('#syncNow').onclick = () => driveStatus?.state === 'reauth_required' ? window.RebootDrive?.connect('/app.html') : window.RebootDrive?.syncNow();
+$('#syncNow').onclick = () => {
+  const config = window.RebootDrive?.config?.() || {};
+  if (driveStatus?.state === 'reauth_required') return window.RebootDrive?.connect('/app.html');
+  if (driveStatus?.state === 'dataset_selection_required' || config.datasetSelectionRequired) { prepareWelcomeDialog(); $('#welcomeDialog').showModal(); return; }
+  return window.RebootDrive?.syncNow();
+};
 
 (async function init() {
   try {
-    if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js?v=55', { updateViaCache: 'none' }).catch(() => {});
+    if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js?v=56', { updateViaCache: 'none' }).catch(() => {});
     // Drive starts its synchronization when drive.js loads. Render the encrypted local snapshot first so network latency never hides the budget.
-    state = await loadState(); state.baseWeeklyBudgetMinor ||= state.weeklyBudgetMinor || 0; state.configured = Boolean(state.baseWeeklyBudgetMinor > 0 && state.rebootDay !== null && state.rebootDay !== undefined && state.rebootDay !== ''); const beforeWeeklyModel = JSON.stringify([state.weeklyCycles || [], state.allocations || []]), migrated = ensureHealthReserve(); synchronizeWeeklyModel(); if (migrated || beforeWeeklyModel !== JSON.stringify([state.weeklyCycles, state.allocations])) await saveState(); await refreshCalculatorStatus(); render(); showView(); const syncShown = showSyncCompleteNotice(); prepareWelcomeDialog(); if (!state.configured && !state.onboarding?.storage && !syncShown) $('#welcomeDialog').showModal(); finishInitialLoad();
+    state = await loadState(); state.baseWeeklyBudgetMinor ||= state.weeklyBudgetMinor || 0; state.configured = Boolean(state.baseWeeklyBudgetMinor > 0 && state.rebootDay !== null && state.rebootDay !== undefined && state.rebootDay !== ''); const beforeWeeklyModel = JSON.stringify([state.weeklyCycles || [], state.allocations || []]), migrated = ensureHealthReserve(); synchronizeWeeklyModel(); if (migrated || beforeWeeklyModel !== JSON.stringify([state.weeklyCycles, state.allocations])) await saveState(); await refreshCalculatorStatus(); render(); showView(); const syncShown = showSyncCompleteNotice(), driveConfig = window.RebootDrive?.config?.() || {}; prepareWelcomeDialog(); if ((!state.configured && !state.onboarding?.storage && !syncShown) || (driveConfig.datasetSelectionRequired && driveConfig.remoteCandidates?.length)) $('#welcomeDialog').showModal(); finishInitialLoad();
   } catch (error) { state = defaultState(); ensureHealthReserve(); storageError = error?.message || 'Coffre local indisponible'; render(); showView(); $('#welcomeDialog').showModal(); finishInitialLoad(); }
 })();

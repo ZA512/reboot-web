@@ -277,17 +277,22 @@
     if (status.dataset_id) {
       const matches = candidates.filter(candidate => candidate.datasetId === status.dataset_id), knownId = storedConfig().driveFileId;
       const remote = matches.find(candidate => candidate.file.id === knownId) || (matches.length === 1 ? matches[0] : null);
-      if (remote) { saveConfig({ remoteCandidates: [] }); return { status, remote, discovery }; }
+      if (remote) { saveConfig({ remoteCandidates: [], datasetSelectionRequired: false, datasetReplacementRequired: false }); return { status, remote, discovery }; }
       if (matches.length > 1) {
+        saveConfig({ datasetSelectionRequired: true, datasetReplacementRequired: false });
         setStatus('dataset_selection_required', 'Plusieurs copies de ce budget REBOOT ont été trouvées sur Google Drive.');
         return { selectionRequired: true, discovery };
       }
-      if (candidates.length) throw new RebootDriveError('Google Drive présente un autre budget REBOOT que celui déjà associé à ce navigateur. Aucun budget n’a été fusionné.', 'configuration_error', 'dataset_conflict');
+      if (candidates.length) {
+        saveConfig({ datasetSelectionRequired: true, datasetReplacementRequired: true, lastSyncErrorCode: 'dataset_conflict', lastSyncErrorMessage: 'Le lien technique avec votre budget Google Drive doit être confirmé.' });
+        setStatus('dataset_selection_required', 'Le lien technique avec votre budget Google Drive doit être confirmé.');
+        return { selectionRequired: true, replacementRequired: true, discovery };
+      }
       if (discovery.invalid.length) throw new RebootDriveError('Un fichier REBOOT trouvé sur Google Drive est invalide. REBOOT ne créera rien tant qu’il n’aura pas été vérifié.', 'configuration_error', 'invalid_dataset');
       return { status, remote: null, discovery };
     }
     if (candidates.length) {
-      saveConfig({ brokerConnected: true, syncPendingSetup: false, lastSyncErrorCode: '', lastSyncErrorMessage: '', dirty: false });
+      saveConfig({ brokerConnected: true, syncPendingSetup: false, datasetSelectionRequired: true, datasetReplacementRequired: false, lastSyncErrorCode: '', lastSyncErrorMessage: '', dirty: false });
       setStatus('dataset_selection_required', candidates.length > 1 ? 'Plusieurs budgets REBOOT ont été trouvés sur Google Drive.' : 'Un budget REBOOT existant a été trouvé sur Google Drive.');
       return { selectionRequired: true, discovery };
     }
@@ -322,7 +327,7 @@
     if (localChanged) await saveStates(mergedStates);
     const file = remoteChanged ? await storageProvider.save(mergedStates, remote?.file, { datasetId, revision, schemaVersion: 3 }) : remote.file;
     const latestConfig = storedConfig(), unchangedSinceSnapshot = Number(latestConfig.localRevision || 0) === syncRevision;
-    saveConfig({ brokerConnected: true, datasetId, driveFileId: file?.id || remote?.file?.id || '', driveVersion: String(file?.version || remote?.file?.version || ''), driveRevision: revision, lastSyncAt: new Date().toISOString(), syncPendingSetup: false, remoteCandidates: [], lastSyncErrorCode: '', lastSyncErrorMessage: '', dirty: !unchangedSinceSnapshot, lastSyncedLocalRevision: unchangedSinceSnapshot ? syncRevision : Number(latestConfig.lastSyncedLocalRevision || 0) });
+    saveConfig({ brokerConnected: true, datasetId, driveFileId: file?.id || remote?.file?.id || '', driveVersion: String(file?.version || remote?.file?.version || ''), driveRevision: revision, lastSyncAt: new Date().toISOString(), syncPendingSetup: false, remoteCandidates: [], datasetSelectionRequired: false, datasetReplacementRequired: false, lastSyncErrorCode: '', lastSyncErrorMessage: '', dirty: !unchangedSinceSnapshot, lastSyncedLocalRevision: unchangedSinceSnapshot ? syncRevision : Number(latestConfig.lastSyncedLocalRevision || 0) });
     if (localChanged) window.dispatchEvent(new CustomEvent('reboot:drive-merged'));
     return { file, merged: localChanged, uploaded: remoteChanged, revision };
   }
@@ -389,14 +394,14 @@
     const candidate = (storedConfig().remoteCandidates || []).find(item => item.datasetId === datasetId);
     if (!candidate) throw new RebootDriveError('Ce budget Google Drive doit être recherché à nouveau avant utilisation.', 'configuration_error', 'dataset_not_discovered');
     const status = await tokenProvider.adoptDataset(datasetId);
-    saveConfig({ driveFileId: candidate.fileId, datasetId, syncPendingSetup: false, remoteCandidates: [], lastSyncErrorCode: '', lastSyncErrorMessage: '' });
+    saveConfig({ driveFileId: candidate.fileId, datasetId, syncPendingSetup: false, remoteCandidates: [], datasetSelectionRequired: false, datasetReplacementRequired: false, lastSyncErrorCode: '', lastSyncErrorMessage: '' });
     return syncNow(status);
   }
   async function replaceDataset(datasetId) {
     const candidate = (storedConfig().remoteCandidates || []).find(item => item.datasetId === datasetId);
     if (!candidate) throw new RebootDriveError('Ce budget Google Drive doit être recherché à nouveau avant utilisation.', 'configuration_error', 'dataset_not_discovered');
     const status = await tokenProvider.replaceDataset(datasetId);
-    saveConfig({ driveFileId: candidate.fileId, datasetId, syncPendingSetup: false, remoteCandidates: [], lastSyncErrorCode: '', lastSyncErrorMessage: '' });
+    saveConfig({ driveFileId: candidate.fileId, datasetId, syncPendingSetup: false, remoteCandidates: [], datasetSelectionRequired: false, datasetReplacementRequired: false, lastSyncErrorCode: '', lastSyncErrorMessage: '' });
     return syncNow(status);
   }
 
