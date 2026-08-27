@@ -105,11 +105,11 @@
     const entries = [];
     for (const [index, item] of (calculator?.manualMonthly || []).entries()) {
       if (!item || item.type === 'income' || (item.endsOn && item.endsOn < dateKey(new Date()))) continue;
-      entries.push({ reference: `manual|${index}`, name: item.name || 'Charge sans nom', amountMinor: Math.round((Number(item.amount) || 0) * 100), frequency: item.frequency === 'annual' ? 'annual' : 'monthly' });
+      entries.push({ reference: `manual|${index}`, trackingId: item.trackingId || '', trackActual: Boolean(item.trackActual), name: item.name || 'Charge sans nom', amountMinor: Math.round((Number(item.amount) || 0) * 100), frequency: item.frequency === 'annual' ? 'annual' : 'monthly' });
     }
     for (const [index, item] of (calculator?.groups || []).entries()) {
       if (!item || !['charge_monthly', 'charge_annual', 'reserve_monthly'].includes(item.category) || (item.endsOn && item.endsOn < dateKey(new Date()))) continue;
-      entries.push({ reference: `group|${index}`, name: item.latestLabel || item.label || 'Charge sans nom', amountMinor: Math.round((Number(item.acceptedAmount) || 0) * 100), frequency: item.category === 'charge_annual' ? 'annual' : 'monthly' });
+      entries.push({ reference: `group|${index}`, trackingId: item.trackingId || '', trackActual: Boolean(item.trackActual), name: item.latestLabel || item.label || 'Charge sans nom', amountMinor: Math.round((Number(item.acceptedAmount) || 0) * 100), frequency: item.category === 'charge_annual' ? 'annual' : 'monthly' });
     }
     return entries;
   }
@@ -404,9 +404,9 @@
   }
 
   function createExpense(operation, action, target = '') {
-    const now = new Date().toISOString(), reserve = household.reserves.find(item => item.id === target);
+    const now = new Date().toISOString(), reserve = household.reserves.find(item => item.id === target), charge = action === 'charge' ? chargeEntries().find(item => item.reference === target) : null;
     const funding = action === 'health' ? 'health' : action === 'charge' ? 'annualized' : action === 'reserve' ? 'reserve' : action === 'transfer' ? 'transfer' : 'weekly';
-    const expense = { id: createId(), date: operation.effectiveDate, createdAt: now, updatedAt: now, amountMinor: Math.abs(operation.amountMinor), label: operation.label, funding, reserveId: reserve?.id || '', reserveName: reserve?.name || '', nature: '', health: action === 'health', bankOperationId: operation.id, importedOperationId: operation.id, ...(action === 'charge' ? { chargeReference: target } : {}) };
+    const expense = { id: createId(), date: operation.effectiveDate, createdAt: now, updatedAt: now, amountMinor: Math.abs(operation.amountMinor), label: operation.label, funding, reserveId: reserve?.id || '', reserveName: reserve?.name || '', nature: '', health: action === 'health', bankOperationId: operation.id, importedOperationId: operation.id, ...(action === 'charge' ? { chargeReference: target, chargeTrackingId: charge?.trackActual ? charge.trackingId : '', chargeName: charge?.name || '' } : {}) };
     household.expenses.push(expense); if (funding === 'weekly') addAllocation(expense); recordEvent('created', 'expense', expense.id, null, expense); return expense;
   }
 
@@ -427,7 +427,8 @@
   }
 
   function finalizeOperationData(operation, draft, createdEntity = null) {
-    const now = new Date().toISOString(), reconciliation = { id: createId(), bankOperationId: operation.id, action: draft.action, targetType: createdEntity ? (draft.action.includes('refund') ? 'refund' : 'expense') : ['existing', 'existing_refund'].includes(draft.action) ? (draft.action === 'existing' ? 'expense' : 'refund') : draft.action === 'charge' ? 'charge' : '', targetId: createdEntity?.id || draft.target || '', chargeReference: draft.action === 'charge' ? draft.target : '', effectiveDate: operation.effectiveDate, status: 'confirmed', createdEntity: Boolean(createdEntity), confirmedAt: now, createdAt: now, updatedAt: now };
+    const charge = draft.action === 'charge' ? chargeEntries().find(item => item.reference === draft.target) : null;
+    const now = new Date().toISOString(), reconciliation = { id: createId(), bankOperationId: operation.id, action: draft.action, targetType: createdEntity ? (draft.action.includes('refund') ? 'refund' : 'expense') : ['existing', 'existing_refund'].includes(draft.action) ? (draft.action === 'existing' ? 'expense' : 'refund') : draft.action === 'charge' ? 'charge' : '', targetId: createdEntity?.id || draft.target || '', chargeReference: draft.action === 'charge' ? draft.target : '', chargeTrackingId: charge?.trackActual ? charge.trackingId : '', effectiveDate: operation.effectiveDate, status: 'confirmed', createdEntity: Boolean(createdEntity), confirmedAt: now, createdAt: now, updatedAt: now };
     household.bankReconciliations.push(reconciliation); operation.classification = draft.action; operation.reviewedAt = now; operation.updatedAt = now; recordEvent('created', 'reconciliation', reconciliation.id, null, reconciliation); return reconciliation;
   }
 

@@ -403,6 +403,9 @@ try {
   await assertContains(page.locator('#reserveList'), 'Ramonage');
   await page.locator('#settingsButton').click();
   if (!(await page.locator('#weeklyBudget').isDisabled())) throw new Error('Calculator budget must not be editable in daily settings');
+  const verifierMenuLink = page.locator('#settingsDialog a[href="verifier.html"]');
+  await assertContains(verifierMenuLink, 'Vérifier les opérations');
+  if (!(await verifierMenuLink.isVisible())) throw new Error('Bank operation verification must be directly accessible from app settings');
   await page.evaluate(async () => {
     const calculator = await RebootSecureStorage.read('reboot-calculator-v1', 'reboot-site-v02');
     calculator.updatedAt = new Date(Date.now() + 1000).toISOString();
@@ -682,6 +685,28 @@ try {
   await page.locator('[data-remove-charge="manual|2"]').click();
   await page.waitForFunction(() => !document.querySelector('#chargeList')?.textContent?.includes('Assurance annuelle'));
   console.log('PASS annual and monthly recurring lines retain their frequency, show their conversion and update the monthly average');
+
+  await page.locator('#addChargeButton').click();
+  await page.locator('#chargeName').fill('Essence lissée'); await page.locator('#chargeAmount').fill('200'); await page.locator('#chargeTrackActual').check();
+  await page.locator('#chargeForm button[value="default"]').click(); await page.locator('#chargeDialog').waitFor({ state: 'hidden' });
+  await assertContains(page.locator('#trackedChargesPanel'), 'Essence lissée'); await assertContains(page.locator('#trackedChargesPanel'), 'Moyenne en construction');
+  const remainingBeforeTrackedPayment = await page.locator('#remaining').innerText();
+  await page.locator('[data-add-tracked-payment]').last().click();
+  if (!(await page.locator('input[name="funding"][value="tracked"]').isChecked())) throw new Error('The tracked-charge action must preselect its neutral funding mode');
+  await page.locator('#expenseAmount').fill('80'); await page.locator('#saveExpenseButton').click(); await page.locator('#expenseDialog').waitFor({ state: 'hidden' });
+  if ((await page.locator('#remaining').innerText()) !== remainingBeforeTrackedPayment) throw new Error('A tracked charge payment must never reduce the weekly remaining amount a second time');
+  await assertContains(page.locator('#trackedChargesPanel'), '80,00');
+  const trackedStored = await page.evaluate(async () => { const daily = await RebootSecureStorage.read('reboot-local-v1', 'reboot-local-v1'), calculator = await RebootSecureStorage.read('reboot-calculator-v1', 'reboot-site-v02'), charge = calculator.manualMonthly.find(item => item.name === 'Essence lissée'), expense = daily.expenses.find(item => item.chargeTrackingId === charge.trackingId); return { charge, expense, allocations: daily.allocations.filter(item => item.transactionId === expense.id && !item.deletedAt) }; });
+  if (!trackedStored.charge.trackActual || !trackedStored.charge.trackingId || trackedStored.expense.funding !== 'annualized' || trackedStored.allocations.length) throw new Error('Tracked charge metadata must be stable and remain outside weekly allocations');
+  await page.evaluate(async () => {
+    const daily = await RebootSecureStorage.read('reboot-local-v1', 'reboot-local-v1'), calculator = await RebootSecureStorage.read('reboot-calculator-v1', 'reboot-site-v02'), charge = calculator.manualMonthly.find(item => item.name === 'Essence lissée'), now = new Date(), iso = date => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+    charge.trackActualSince = iso(new Date(now.getFullYear(), now.getMonth() - 4, 1));
+    daily.expenses = daily.expenses.filter(item => item.chargeTrackingId !== charge.trackingId);
+    for (let offset = 1; offset <= 3; offset += 1) { const date = new Date(now.getFullYear(), now.getMonth() - offset, 12), at = new Date().toISOString(); daily.expenses.push({ id: `fuel-history-${offset}`, date: iso(date), amountMinor: 26000, label: 'Plein historique', funding: 'annualized', chargeTrackingId: charge.trackingId, chargeReference: `manual|${calculator.manualMonthly.indexOf(charge)}`, chargeName: charge.name, health: false, createdAt: at, updatedAt: at }); }
+    await RebootSecureStorage.save('reboot-calculator-v1', calculator); await RebootSecureStorage.save('reboot-local-v1', daily);
+  });
+  await page.reload({ waitUntil: 'networkidle' }); await assertContains(page.locator('#trackedChargesPanel'), '260,00'); await assertContains(page.locator('#trackedChargesPanel'), 'Montant à réviser');
+  console.log('PASS tracked charges record real payments without double deduction and flag a sustained three-month drift');
 } finally {
   await browser.close();
 }
