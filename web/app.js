@@ -19,6 +19,8 @@ let movementFilter = 'all';
 let trackingWeeks = 52;
 let driveStatus = null;
 let pendingTrackedChargeId = '';
+let syncNoticeTimer = null;
+let syncWasPending = false;
 
 const defaultState = () => ({ householdName: 'Notre foyer', configured: false, baseWeeklyBudgetMinor: 0, weeklyBudgetMinor: 0, rebootDay: null, expenses: [], refunds: [], reserves: [], reserveTransfers: [], importedBankOperations: [], bankReconciliations: [], bankChargeProfiles: [], shortcuts: [], weeklyCycles: [], allocations: [], auditEvents: [], backupStatus: {}, onboarding: null });
 const createId = () => crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
@@ -41,7 +43,16 @@ function ensureHealthReserve() {
 }
 
 async function loadState() { const stored = await RebootSecureStorage.read(DATABASE_NAME, LEGACY_STORAGE_KEY); return { ...defaultState(), ...(stored || {}) }; }
-function saveState() { synchronizeWeeklyModel(); state.updatedAt = new Date().toISOString(); saveQueue = saveQueue.then(() => RebootSecureStorage.save(DATABASE_NAME, state)).catch(error => { storageError = error?.message || 'Stockage indisponible'; renderFreshness(); }); return saveQueue; }
+function saveState(options = {}) {
+  const waitForDrive = options === true || Boolean(options.waitForDrive);
+  synchronizeWeeklyModel(); state.updatedAt = new Date().toISOString();
+  const localSave = saveQueue = saveQueue.then(async () => { await RebootSecureStorage.save(DATABASE_NAME, state); return true; }).catch(error => { storageError = error?.message || 'Stockage indisponible'; renderFreshness(); return false; });
+  if (!waitForDrive) return localSave;
+  return localSave.then(async saved => {
+    if (!saved || !window.RebootDrive?.config?.().configured) return saved;
+    return window.RebootDrive.flushNow ? window.RebootDrive.flushNow() : window.RebootDrive.syncNow().then(() => !window.RebootDrive.config().dirty);
+  });
+}
 function recordEvent(type, entity, entityId, before = null, after = null) { state.auditEvents.push({ id: createId(), type, entity, entityId, at: new Date().toISOString(), before: before ? snapshot(before) : null, after: after ? snapshot(after) : null }); }
 
 function createWeeklyCycle(startDate, budgetMinor = null, status = 'planned') {
@@ -144,19 +155,44 @@ function renderFreshness() {
   const target = $('#freshness'); if (!target) return;
   if (storageError) { target.innerHTML = `<span class="status-dot" style="background:#d96b50"></span><span class="sync-label">Stockage indisponible</span>`; return; }
   const drive = window.RebootDrive?.config?.();
-  const syncState = driveStatus?.state || (drive?.datasetSelectionRequired ? 'dataset_selection_required' : drive?.lastSyncErrorCode ? (drive.lastSyncErrorCode === 'sync_busy' ? 'sync_delayed' : 'sync_error') : '');
+  let syncState = driveStatus?.state || (drive?.datasetSelectionRequired ? 'dataset_selection_required' : drive?.lastSyncErrorCode ? (drive.lastSyncErrorCode === 'sync_busy' ? 'sync_delayed' : 'sync_error') : '');
+  if (drive?.dirty && !['syncing', 'sync_error', 'sync_delayed', 'reauth_required', 'dataset_selection_required'].includes(syncState)) syncState = 'sync_pending';
+  const pendingCount = Math.max(1, Number(drive?.localRevision || 0) - Number(drive?.lastSyncedLocalRevision || 0));
+  target.dataset.syncState = syncState;
   $('#syncNow')?.classList.toggle('hidden', !drive?.configured && !['syncing', 'connected_idle', 'sync_error', 'sync_delayed', 'reauth_required'].includes(syncState));
-  if (drive?.configured || ['syncing', 'connected_idle', 'sync_error', 'sync_delayed', 'reauth_required'].includes(syncState)) {
+  if (drive?.configured || ['sync_pending', 'syncing', 'connected_idle', 'sync_error', 'sync_delayed', 'reauth_required'].includes(syncState)) {
     const at = drive.lastSyncAt ? new Intl.DateTimeFormat('fr-FR', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }).format(new Date(drive.lastSyncAt)) : '';
-    const label = syncState === 'syncing' ? 'Synchronisation…' : syncState === 'dataset_selection_required' ? 'Drive à confirmer' : syncState === 'reauth_required' ? 'Drive à reconnecter' : syncState === 'sync_delayed' ? 'Sync retardée' : syncState === 'sync_error' ? 'Sync en attente' : drive.syncPendingSetup ? 'Drive prêt à configurer' : `Drive synchronisé${at ? ` · ${at}` : ''}`;
+    const label = syncState === 'sync_pending' ? `${pendingCount} modification${pendingCount > 1 ? 's' : ''} à envoyer` : syncState === 'syncing' ? 'Envoi vers Drive…' : syncState === 'dataset_selection_required' ? 'Drive à confirmer' : syncState === 'reauth_required' ? 'Drive à reconnecter' : syncState === 'sync_delayed' ? 'Sync retardée' : syncState === 'sync_error' ? 'Sync en attente' : drive.syncPendingSetup ? 'Drive prêt à configurer' : `Drive synchronisé${at ? ` · ${at}` : ''}`;
     const color = ['dataset_selection_required', 'reauth_required'].includes(syncState) ? '#d58a22' : ['sync_error', 'sync_delayed'].includes(syncState) ? '#7b8a86' : '#0e6f67';
     target.innerHTML = `<span class="status-dot" style="background:${color}"></span><span class="sync-label">${label}</span>`;
+    renderSyncNotice(syncState, drive, pendingCount);
     return;
   }
+  renderSyncNotice('', drive, 0);
   const backups = Object.entries(state?.backupStatus || {}).filter(([, at]) => at).sort(([, a], [, b]) => new Date(b) - new Date(a));
   if (!backups.length) { target.innerHTML = '<span class="status-dot"></span><span class="sync-label">Local uniquement</span>'; return; }
   const [kind, at] = backups[0]; const date = new Intl.DateTimeFormat('fr-FR', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }).format(new Date(at));
   target.innerHTML = `<span class="status-dot"></span><span class="sync-label">${kind === 'drive' ? 'Drive' : 'Sauvegardé'} · ${date}</span>`;
+}
+
+function renderSyncNotice(syncState, drive, pendingCount) {
+  const notice = $('#syncNotice'), text = $('#syncNoticeText'), action = $('#syncNoticeAction'); if (!notice || !text || !action) return;
+  clearTimeout(syncNoticeTimer); notice.classList.remove('success', 'error'); action.classList.add('hidden');
+  if (['sync_pending', 'syncing'].includes(syncState)) {
+    syncWasPending = true; notice.classList.remove('hidden');
+    text.textContent = syncState === 'sync_pending' ? `${pendingCount} modification${pendingCount > 1 ? 's' : ''} enregistrée${pendingCount > 1 ? 's' : ''} ici. Envoi vers Drive…` : 'Envoi vers Google Drive… gardez REBOOT ouvert un instant.';
+    return;
+  }
+  if (['sync_error', 'sync_delayed', 'reauth_required'].includes(syncState)) {
+    syncWasPending = true; notice.classList.add('error'); notice.classList.remove('hidden'); action.classList.remove('hidden');
+    text.textContent = syncState === 'reauth_required' ? 'La saisie est locale. Reconnectez Drive avant de quitter.' : 'La saisie est locale, mais pas encore sur Drive.';
+    action.textContent = syncState === 'reauth_required' ? 'Reconnecter' : 'Réessayer'; return;
+  }
+  if (syncState === 'connected_idle' && !drive?.dirty && syncWasPending) {
+    syncWasPending = false; notice.classList.add('success'); notice.classList.remove('hidden'); text.textContent = 'Synchronisé — vous pouvez quitter REBOOT.';
+    syncNoticeTimer = setTimeout(() => notice.classList.add('hidden'), 2800); return;
+  }
+  notice.classList.add('hidden');
 }
 
 function renderWeekMascot(cycle) {
@@ -437,7 +473,9 @@ async function saveExpense(event) {
   const expense = lockedSpread ? { ...existing, label, nature: String(form.get('nature') || ''), updatedAt: new Date().toISOString() } : { id: existing?.id || createId(), date: String(form.get('date') || dateKey(new Date())), createdAt: existing?.createdAt || new Date().toISOString(), updatedAt: new Date().toISOString(), amountMinor, label, funding, reserveId: reserve?.id || '', reserveName: reserve?.name || '', chargeTrackingId: fundingChoice === 'tracked' ? trackedCharge.trackingId : '', chargeReference: fundingChoice === 'tracked' ? trackedCharge.reference : '', chargeName: fundingChoice === 'tracked' ? trackedCharge.name : '', nature: String(form.get('nature') || ''), health };
   if (existing) { const before = snapshot(existing); Object.assign(existing, expense); if (!lockedSpread) { const deletedAt = new Date().toISOString(), spread = form.get('spreadMode') === 'spread'; existingAllocations.forEach(item => { item.deletedAt = deletedAt; item.updatedAt = deletedAt; }); if (expense.funding === 'weekly') state.allocations.push(...createAllocations(expense, spread ? Number(form.get('spreadWeeks')) : 1, spread ? String(form.get('spreadStart')) : 'current')); } recordEvent('updated', 'expense', existing.id, before, existing); }
   else { state.expenses.push(expense); if (expense.funding === 'weekly') { const spread = form.get('spreadMode') === 'spread'; state.allocations.push(...createAllocations(expense, spread ? Number(form.get('spreadWeeks')) : 1, spread ? String(form.get('spreadStart')) : 'current')); } recordEvent('created', 'expense', expense.id, null, expense); rememberShortcut(expense, form); }
-  await saveState(); $('#expenseDialog').close(); render();
+  const saveButton = $('#saveExpenseButton'), defaultButtonText = saveButton.textContent; saveButton.disabled = true; saveButton.textContent = window.RebootDrive?.config?.().configured ? 'Envoi vers Drive…' : 'Enregistrement…';
+  try { await saveState({ waitForDrive: true }); $('#expenseDialog').close(); render(); }
+  finally { saveButton.disabled = false; saveButton.textContent = defaultButtonText; }
 }
 function deleteExpense(id) { const expense = state.expenses.find(item => item.id === id); if (!expense) return; const allocations = activeAllocations(id), label = expense.label || 'cette dépense'; const message = allocations.length > 1 ? `Supprimer « ${label} » et ses ${allocations.length} affectations hebdomadaires ?` : `Supprimer « ${label} » ?`; if (!confirm(message)) return; const before = snapshot(expense), deletedAt = new Date().toISOString(); expense.deletedAt = deletedAt; expense.updatedAt = deletedAt; allocations.forEach(item => { item.deletedAt = deletedAt; item.updatedAt = deletedAt; }); recordEvent('deleted', 'expense', id, before, expense); saveState(); render(); }
 
@@ -593,10 +631,11 @@ $('#syncNow').onclick = () => {
   if (driveStatus?.state === 'dataset_selection_required' || config.datasetSelectionRequired) { prepareWelcomeDialog(); $('#welcomeDialog').showModal(); return; }
   return window.RebootDrive?.syncNow();
 };
+$('#syncNoticeAction').onclick = () => $('#syncNow').click();
 
 (async function init() {
   try {
-    if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js?v=56', { updateViaCache: 'none' }).catch(() => {});
+    if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js?v=59', { updateViaCache: 'none' }).catch(() => {});
     // Drive starts its synchronization when drive.js loads. Render the encrypted local snapshot first so network latency never hides the budget.
     state = await loadState(); state.baseWeeklyBudgetMinor ||= state.weeklyBudgetMinor || 0; state.configured = Boolean(state.baseWeeklyBudgetMinor > 0 && state.rebootDay !== null && state.rebootDay !== undefined && state.rebootDay !== ''); const beforeWeeklyModel = JSON.stringify([state.weeklyCycles || [], state.allocations || []]), migrated = ensureHealthReserve(); synchronizeWeeklyModel(); if (migrated || beforeWeeklyModel !== JSON.stringify([state.weeklyCycles, state.allocations])) await saveState(); await refreshCalculatorStatus(); render(); showView(); const syncShown = showSyncCompleteNotice(), driveConfig = window.RebootDrive?.config?.() || {}; prepareWelcomeDialog(); if ((!state.configured && !state.onboarding?.storage && !syncShown) || (driveConfig.datasetSelectionRequired && driveConfig.remoteCandidates?.length)) $('#welcomeDialog').showModal(); finishInitialLoad();
   } catch (error) { state = defaultState(); ensureHealthReserve(); storageError = error?.message || 'Coffre local indisponible'; render(); showView(); $('#welcomeDialog').showModal(); finishInitialLoad(); }

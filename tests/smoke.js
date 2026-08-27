@@ -103,6 +103,7 @@ try {
 
   await page.locator('#addExpenseButton').click();
   if ((await page.locator('input[name="nature"]').count()) !== 5 || (await page.locator('#expenseNature').count())) throw new Error('Expense nature must use five quick radio choices instead of a select');
+  if (!(await page.locator('#expenseHealth').evaluate(element => element.closest('.nature-choice-list') !== null))) throw new Error('Health expense must be the sixth compact choice beside expense nature');
   const natureFollowsDate = await page.evaluate(() => Boolean(document.querySelector('#expenseDate')?.closest('.field')?.nextElementSibling?.classList.contains('nature-field')));
   if (!natureFollowsDate) throw new Error('Expense nature must be placed immediately below the date');
   await page.locator('#expenseAmount').fill('25');

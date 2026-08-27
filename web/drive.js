@@ -7,7 +7,7 @@
   const DAILY = { database: 'reboot-local-v1', legacy: 'reboot-local-v1' };
   const CALCULATOR = { database: 'reboot-calculator-v1', legacy: 'reboot-site-v02' };
   const MAX_LEASE_ATTEMPTS = 5;
-  let syncTimer = null, queuedSync = null, syncing = false, listening = false, applyingRemote = false, storageChangePending = false;
+  let syncTimer = null, queuedSync = null, syncing = false, activeSyncPromise = null, listening = false, applyingRemote = false, storageChangePending = false;
 
   class RebootDriveError extends Error {
     constructor(message, category = 'temporary', code = 'drive_error') { super(message); this.name = 'RebootDriveError'; this.category = category; this.code = code; }
@@ -342,10 +342,9 @@
     }
     throw new RebootDriveError('Synchronisation retardée : un autre appareil est probablement en train de synchroniser. Vos modifications sont conservées sur cet appareil.', 'temporary', 'sync_busy');
   }
-  async function syncNow() {
-    if (syncing) { storageChangePending = true; return null; }
-    syncing = true;
+  async function performSync() {
     try {
+      if (storedConfig().brokerConnected) setStatus('syncing', 'Envoi immédiat des modifications vers Google Drive.');
       const status = await tokenProvider.getStatus();
       if (status.reauth_required) { setStatus('reauth_required', 'Google Drive doit être reconnecté.'); return null; }
       if (!status.connected) { saveConfig({ brokerConnected: false }); setStatus('disconnected'); return null; }
@@ -362,13 +361,28 @@
       return null;
     } finally {
       syncing = false;
+      activeSyncPromise = null;
       if (storageChangePending) { storageChangePending = false; queueAutomaticSync(); }
     }
   }
-  function queueAutomaticSync() {
+  function syncNow() {
+    if (syncing) { storageChangePending = true; return activeSyncPromise || Promise.resolve(null); }
+    syncing = true;
+    activeSyncPromise = performSync();
+    return activeSyncPromise;
+  }
+  async function flushNow() {
+    if (!config().configured) return true;
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      await syncNow();
+      if (!storedConfig().dirty) return true;
+    }
+    return false;
+  }
+  function queueAutomaticSync(delay = 0) {
     if (applyingRemote) return;
     if (syncing) { storageChangePending = true; return; }
-    clearTimeout(queuedSync); queuedSync = setTimeout(syncNow, 900);
+    clearTimeout(queuedSync); queuedSync = setTimeout(syncNow, delay);
   }
   function noteLocalChange(event) {
     if (applyingRemote) return;
@@ -376,7 +390,10 @@
     if (databaseName && ![DAILY.database, CALCULATOR.database].includes(databaseName)) return;
     const previous = storedConfig();
     saveConfig({ deviceId: deviceId(), localRevision: Number(previous.localRevision || 0) + 1, dirty: true });
-    queueAutomaticSync();
+    setStatus('sync_pending', 'Modification enregistrée sur cet appareil, envoi vers Google Drive.');
+    // Start the network request in the same interaction instead of waiting for
+    // a debounce timer that mobile browsers may suspend in the background.
+    void syncNow();
   }
   async function startAutoSync(options = {}) {
     clearLegacyConfiguration();
@@ -384,7 +401,10 @@
       listening = true;
       window.addEventListener('reboot:storage-saved', noteLocalChange);
       window.addEventListener('online', syncNow);
-      document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') syncNow(); });
+      document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'visible' || storedConfig().dirty) void syncNow();
+      });
+      window.addEventListener('pagehide', () => { if (storedConfig().dirty) void syncNow(); });
     }
     clearInterval(syncTimer); syncTimer = setInterval(syncNow, options.intervalMs || 120000);
     return syncNow();
@@ -406,5 +426,5 @@
   }
 
   const initialSync = startAutoSync();
-  window.RebootDrive = { config, synchronize: syncNow, upload: syncNow, pull: syncNow, mergeStates, syncNow, useDataset, replaceDataset, startAutoSync, initialSync: () => initialSync, disconnect, connect: returnTo => tokenProvider.connect(returnTo), deviceId, tokenProvider, storageProvider, RebootDriveError };
+  window.RebootDrive = { config, synchronize: syncNow, upload: syncNow, pull: syncNow, mergeStates, syncNow, flushNow, useDataset, replaceDataset, startAutoSync, initialSync: () => initialSync, disconnect, connect: returnTo => tokenProvider.connect(returnTo), deviceId, tokenProvider, storageProvider, RebootDriveError };
 })();
