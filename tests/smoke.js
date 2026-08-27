@@ -104,7 +104,9 @@ try {
   console.log('PASS encrypted local state survives reload');
 
   await page.locator('#addExpenseButton').click();
-  if ((await page.locator('input[name="nature"]').count()) !== 5 || (await page.locator('#expenseNature').count())) throw new Error('Expense nature must use five quick radio choices instead of a select');
+  if ((await page.locator('input[name="nature"]').count()) !== 5 || (await page.locator('.nature-choice').count()) !== 4 || (await page.locator('#expenseNature').count())) throw new Error('Expense nature must keep an invisible empty default and show only four quick choices');
+  if (!(await page.locator('.expense-primary-row').evaluate(row => row.contains(document.querySelector('#expenseAmount')) && row.contains(document.querySelector('#expenseDate'))))) throw new Error('Amount and date must share the compact first row');
+  if (!(await page.locator('#shortcutSaveField').isHidden())) throw new Error('The unused shortcut switch must stay hidden in the expense form');
   if (!(await page.locator('#expenseHealth').evaluate(element => element.closest('.funding-choices') !== null))) throw new Error('Health expense must be the sixth compact funding choice');
   await assertContains(page.locator('.funding-choice-health'), 'remboursable');
   await page.locator('#expenseHealth').check();
@@ -112,8 +114,6 @@ try {
   await page.locator('input[name="funding"][value="weekly"]').check();
   if (await page.locator('#expenseHealth').isChecked()) throw new Error('Selecting another funding source must clear Health funding');
   if (!(await page.locator('#saveAnotherExpenseButton').isVisible())) throw new Error('A new expense must offer a non-blocking save-and-add-another action');
-  const natureFollowsDate = await page.evaluate(() => Boolean(document.querySelector('#expenseDate')?.closest('.field')?.nextElementSibling?.classList.contains('nature-field')));
-  if (!natureFollowsDate) throw new Error('Expense nature must be placed immediately below the date');
   await page.locator('#expenseAmount').fill('12.34');
   await page.locator('#expenseLabel').fill('Test série');
   await page.locator('input[name="funding"][value="transfer"]').check();
@@ -137,6 +137,15 @@ try {
   await assertContains(page.locator('#remaining'), '571,15');
   await assertContains(page.locator('#expenseList'), 'Nécessaire');
   await assertContains(page.locator('#expenseList'), 'Santé');
+  await page.goto(`${baseUrl}/app.html#movements`, { waitUntil: 'networkidle' });
+  if (!(await page.locator('[data-movement-filter="budget"]').isVisible()) || !(await page.locator('[data-movement-filter="charges"]').isVisible())) throw new Error('Movements must expose only the two additional useful source filters');
+  await page.locator('#movementSearch').fill('60,00');
+  await assertContains(page.locator('#allMovementsList'), 'Test correction');
+  await assertContains(page.locator('#allMovementsList .movement-type'), 'Santé');
+  if ((await page.locator('#allMovementsList .expense-item').count()) !== 1) throw new Error('Movement amount search must narrow the list just like label search');
+  await page.locator('#movementSearch').fill('');
+  await page.locator('[data-movement-filter="health"]').click();
+  await assertContains(page.locator('#allMovementsList'), 'Test correction');
   await page.goto(`${baseUrl}/app.html#reserves`, { waitUntil: 'networkidle' });
   await assertContains(page.locator('#healthCurrentBalance'), '-60,00');
   await assertContains(page.locator('.health-help .tooltip'), 'solde estimé');
@@ -614,7 +623,7 @@ try {
   await assertContains(page.locator('#remaining'), '302,61');
   console.log('PASS bank decisions are grouped and each ready section can be validated in one action without duplicating existing expenses');
 
-  await page.locator('#addExpenseButton').click(); await page.locator('#expenseAmount').fill('7'); await page.locator('#expenseLabel').fill('Boulangerie'); await page.locator('.nature-choice', { hasText: 'Plaisir' }).click(); await page.locator('input[name="funding"][value="annualized"]').check(); await page.locator('#saveAsShortcut').check(); await page.locator('#saveExpenseButton').click(); await page.locator('#expenseDialog').waitFor({ state: 'hidden' });
+  await page.locator('#addExpenseButton').click(); await page.locator('#expenseAmount').fill('7'); await page.locator('#expenseLabel').fill('Boulangerie'); await page.locator('.nature-choice', { hasText: 'Plaisir' }).click(); await page.locator('input[name="funding"][value="annualized"]').check(); await page.locator('#saveAsShortcut').evaluate(input => { input.checked = true; }); await page.locator('#saveExpenseButton').click(); await page.locator('#expenseDialog').waitFor({ state: 'hidden' });
   await page.locator('#addExpenseButton').click(); const shortcut = page.locator('[data-shortcut]', { hasText: 'Boulangerie' }); await shortcut.click();
   if ((await page.locator('#expenseLabel').inputValue()) !== 'Boulangerie' || !(await page.locator('input[name="nature"][value="pleasure"]').isChecked()) || !(await page.locator('input[name="funding"][value="annualized"]').isChecked())) throw new Error('A true shortcut must restore the label, nature and funding choices');
   acceptConfirmation(page); await page.locator('[data-delete-shortcut]').click(); await page.locator('#expenseDialog .close-button').click();
