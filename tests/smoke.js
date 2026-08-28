@@ -643,6 +643,10 @@ try {
   await assertContains(page.locator('#spreadPreview'), '9,33'); await assertContains(page.locator('#spreadPreview'), '9,34');
   await page.locator('#saveExpenseButton').click(); await page.locator('#expenseDialog').waitFor({ state: 'hidden' });
   await assertContains(page.locator('#remaining'), '90,67'); await assertContains(page.locator('#futureCommitmentList'), '9,34');
+  await assertContains(page.locator('#weekSpentTotal'), '9,33');
+  if (await page.locator('#weekSpent').evaluate(element => element.open)) throw new Error('Current-week spending details must stay discreet and collapsed by default');
+  await page.locator('#weekSpent summary').click();
+  await assertContains(page.locator('#weekReservedTotal'), '0,00'); await assertContains(page.locator('#weekRefundTotal'), '0,00'); await assertContains(page.locator('#weekNetTotal'), '9,33');
   const storedSpread = await page.evaluate(async () => { const saved = await RebootSecureStorage.read('reboot-local-v1', 'reboot-local-v1'); return { expenses: saved.expenses.filter(item => !item.deletedAt && item.label === 'Achat étalé'), allocations: saved.allocations.filter(item => !item.deletedAt && saved.expenses.find(expense => expense.id === item.transactionId)?.label === 'Achat étalé') }; });
   if (storedSpread.expenses.length !== 1 || storedSpread.expenses[0].amountMinor !== 2800 || storedSpread.allocations.map(item => item.amountMinor).join(',') !== '933,933,934') throw new Error('A spread expense must remain one real transaction with exact weekly allocations');
   await page.locator('#expenseList article', { hasText: 'Achat étalé' }).locator('[data-edit-expense]').click();
@@ -653,6 +657,7 @@ try {
   acceptConfirmation(page); await page.locator('#expenseList article', { hasText: 'Achat étalé' }).locator('[data-delete]').click();
   const deletedSpread = await page.evaluate(async () => { const saved = await RebootSecureStorage.read('reboot-local-v1', 'reboot-local-v1'), expense = saved.expenses.find(item => item.label === 'Achat étalé'); return { expenseDeleted: Boolean(expense.deletedAt), allocationsDeleted: saved.allocations.filter(item => item.transactionId === expense.id).every(item => item.deletedAt) }; });
   if (!deletedSpread.expenseDeleted || !deletedSpread.allocationsDeleted) throw new Error('Deleting a spread must tombstone its transaction and every allocation');
+  console.log('PASS current-week spending stays compact, expands into an exact breakdown and follows weekly allocations');
   console.log('PASS manual spread previews cents, affects only the current allocation, warns, locks structural edits and deletes atomically');
 
   await page.goto(`${baseUrl}/verifier.html`, { waitUntil: 'networkidle' });

@@ -118,17 +118,19 @@ function reserveDeductionMinor() { return state.reserves.filter(reserve => reser
 function effectiveWeeklyBudgetMinor() { return Math.max(0, (state.baseWeeklyBudgetMinor || state.weeklyBudgetMinor || 0) - reserveDeductionMinor()); }
 function cycleInfo() {
   const start = startOfCycle();
-  if (!start) return { configured: false, start: null, end: null, daysLeft: null, spentMinor: 0, refundMinor: 0, budgetMinor: 0, remainingMinor: null };
+  if (!start) return { configured: false, start: null, end: null, daysLeft: null, expenseMinor: 0, transferMinor: 0, spentMinor: 0, refundMinor: 0, budgetMinor: 0, remainingMinor: null };
   const end = new Date(start); end.setDate(end.getDate() + 6);
   const startKey = dateKey(start), endKey = dateKey(end), today = new Date();
   const currentCycle = state.weeklyCycles.find(item => item.startDate === startKey && !item.deletedAt);
   const weeklyAllocations = activeAllocations().filter(allocation => allocation.cycleStart === startKey && !state.expenses.find(expense => expense.id === allocation.transactionId)?.deletedAt);
   const weeklyTransfers = state.reserveTransfers.filter(transfer => transfer.sourceType === 'weekly' && !transfer.deletedAt && transfer.date >= startKey && transfer.date <= endKey);
-  const spentMinor = weeklyAllocations.reduce((sum, allocation) => sum + allocation.amountMinor, 0) + weeklyTransfers.reduce((sum, transfer) => sum + transfer.amountMinor, 0);
+  const expenseMinor = weeklyAllocations.reduce((sum, allocation) => sum + allocation.amountMinor, 0);
+  const transferMinor = weeklyTransfers.reduce((sum, transfer) => sum + transfer.amountMinor, 0);
+  const spentMinor = expenseMinor + transferMinor;
   const refundMinor = state.refunds.filter(refund => refund.applyToBudget && !refund.health && !refund.deletedAt && refund.date >= startKey && refund.date <= endKey).reduce((sum, refund) => sum + refund.amountMinor, 0);
   const daysLeft = Math.max(1, Math.ceil((new Date(end.getFullYear(), end.getMonth(), end.getDate() + 1) - new Date(today.getFullYear(), today.getMonth(), today.getDate())) / 86400000));
   const budgetMinor = currentCycle?.budgetMinor ?? effectiveWeeklyBudgetMinor();
-  return { configured: true, entity: currentCycle, start, end, daysLeft, spentMinor, refundMinor, budgetMinor, remainingMinor: budgetMinor - spentMinor + refundMinor };
+  return { configured: true, entity: currentCycle, start, end, daysLeft, expenseMinor, transferMinor, spentMinor, refundMinor, budgetMinor, remainingMinor: budgetMinor - spentMinor + refundMinor };
 }
 
 function monthsSince(value, today = new Date()) { const opened = new Date(`${value}T12:00:00`); let months = (today.getFullYear() - opened.getFullYear()) * 12 + today.getMonth() - opened.getMonth(); if (today.getDate() < opened.getDate()) months -= 1; return Math.max(0, months); }
@@ -225,9 +227,10 @@ function renderWeek() {
   $('#householdHeader').textContent = state.householdName || 'Notre foyer';
   const onboarding = Boolean(!cycle.configured && state.onboarding?.storage); $('#onboardingPanel').classList.toggle('hidden', !onboarding);
   if (!cycle.configured) {
-    $('#remaining').textContent = '—'; $('#budgetTotal').textContent = 'À définir'; $('#cycleDates').textContent = 'Non configuré'; $('#daysLeft').textContent = 'Préparez le budget'; $('#dailyGuide').textContent = '—'; $('#balanceTrack').style.width = '0%'; $('#reserveDeduction').classList.add('hidden');
+    $('#remaining').textContent = '—'; $('#budgetTotal').textContent = 'À définir'; $('#cycleDates').textContent = 'Non configuré'; $('#daysLeft').textContent = 'Préparez le budget'; $('#dailyGuide').textContent = '—'; $('#balanceTrack').style.width = '0%'; $('#weekSpent').classList.add('hidden'); $('#reserveDeduction').classList.add('hidden');
   } else {
     $('#remaining').textContent = formatMoney(cycle.remainingMinor); $('#remaining').classList.toggle('negative', cycle.remainingMinor < 0); $('#budgetTotal').textContent = formatMoney(cycle.budgetMinor); $('#cycleDates').textContent = `${shortDate(dateKey(cycle.start))} → ${shortDate(dateKey(cycle.end))}`; $('#daysLeft').textContent = cycle.daysLeft === 1 ? 'jusqu’à demain' : `${cycle.daysLeft} jours restants`; $('#dailyGuide').textContent = `${formatMoney(Math.max(0, cycle.remainingMinor) / cycle.daysLeft)} / jour`; $('#balanceTrack').style.width = `${cycle.budgetMinor ? Math.min(100, Math.max(0, (cycle.spentMinor - cycle.refundMinor) / cycle.budgetMinor * 100)) : 0}%`;
+    $('#weekSpent').classList.remove('hidden'); $('#weekSpentTotal').textContent = formatMoney(cycle.expenseMinor); $('#weekReservedTotal').textContent = formatMoney(cycle.transferMinor); $('#weekRefundTotal').textContent = formatMoney(cycle.refundMinor); $('#weekNetTotal').textContent = formatMoney(cycle.spentMinor - cycle.refundMinor);
     const deduction = reserveDeductionMinor(); $('#reserveDeduction').classList.toggle('hidden', !deduction); $('#reserveDeduction').textContent = deduction ? `Réserves : − ${formatMoney(deduction)} / semaine` : '';
   }
   renderWeekMascot(cycle); renderSignal(cycle); renderCurrentExpenses(cycle); renderHealth(); renderWeekReserves(); renderFutureCommitments(); renderFreshness();
@@ -674,7 +677,7 @@ $('#syncNoticeAction').onclick = () => $('#syncNow').click();
 
 (async function init() {
   try {
-    if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js?v=61', { updateViaCache: 'none' }).catch(() => {});
+    if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js?v=62', { updateViaCache: 'none' }).catch(() => {});
     // Drive starts its synchronization when drive.js loads. Render the encrypted local snapshot first so network latency never hides the budget.
     state = await loadState(); state.baseWeeklyBudgetMinor ||= state.weeklyBudgetMinor || 0; state.configured = Boolean(state.baseWeeklyBudgetMinor > 0 && state.rebootDay !== null && state.rebootDay !== undefined && state.rebootDay !== ''); const beforeWeeklyModel = JSON.stringify([state.weeklyCycles || [], state.allocations || []]), migrated = ensureHealthReserve(); synchronizeWeeklyModel(); if (migrated || beforeWeeklyModel !== JSON.stringify([state.weeklyCycles, state.allocations])) await saveState(); await refreshCalculatorStatus(); render(); showView(); const syncShown = showSyncCompleteNotice(), driveConfig = window.RebootDrive?.config?.() || {}; prepareWelcomeDialog(); if ((!state.configured && !state.onboarding?.storage && !syncShown) || (driveConfig.datasetSelectionRequired && driveConfig.remoteCandidates?.length)) $('#welcomeDialog').showModal(); finishInitialLoad();
   } catch (error) { state = defaultState(); ensureHealthReserve(); storageError = error?.message || 'Coffre local indisponible'; render(); showView(); $('#welcomeDialog').showModal(); finishInitialLoad(); }
