@@ -648,6 +648,9 @@ try {
   if (!(await page.locator('#currentWeekChartButton').isVisible())) throw new Error('The current week must expose its chart without adding another navigation entry');
   await page.locator('#currentWeekChartButton').click(); await page.locator('#weekChartDialog').waitFor({ state: 'visible' });
   await assertContains(page.locator('#weekChartPeriod'), '→'); await assertContains(page.locator('#weekChartSpent'), '9,33'); await assertContains(page.locator('#weekChartBars'), 'Non précisé');
+  const expectedCurrentStart = await page.evaluate(() => RebootBudgetEngine.cycleStartForDate(RebootBudgetEngine.dateKey(new Date()), new Date().getDay()));
+  const dailyChart = await page.locator('#weekChartDaily').evaluate(element => ({ points: element.querySelectorAll('.week-daily-point').length, total: [...element.querySelectorAll('.week-daily-point')].reduce((sum, point) => sum + Number(point.dataset.amountMinor || 0), 0), firstDate: element.querySelector('.week-daily-point')?.dataset.date }));
+  if (dailyChart.points !== 7 || dailyChart.total !== 933 || dailyChart.firstDate !== expectedCurrentStart) throw new Error(`The daily line chart must start on REBOOT day and preserve the weekly amount: ${JSON.stringify(dailyChart)}`);
   await page.locator('#weekChartDialog button[value="close"]').last().click(); await page.locator('#weekChartDialog').waitFor({ state: 'hidden' });
   await assertContains(page.locator('#weekSpentTotal'), '9,33');
   if (await page.locator('#weekSpent').evaluate(element => element.open)) throw new Error('Current-week spending details must stay discreet and collapsed by default');
@@ -692,6 +695,7 @@ try {
   if ((await page.locator('#trackingList [data-week-chart]').count()) !== 3) throw new Error('Every completed week must expose its own chart action');
   await page.locator('#trackingList [data-week-chart]').first().click(); await page.locator('#weekChartDialog').waitFor({ state: 'visible' });
   await assertContains(page.locator('#weekChartSpent'), '100,00'); await assertContains(page.locator('#weekChartAdjustments'), '15,00');
+  await assertContains(page.locator('#weekChartDailyCarry'), 'dépenses étalées antérieures');
   await page.locator('#weekChartDialog button[value="close"]').last().click();
   await page.goto(`${baseUrl}/app.html#movements`, { waitUntil: 'networkidle' });
   if ((await page.locator('#allMovementsList .movement-period').count()) < 3) throw new Error('Movements from several cycles must be separated by visible weekly periods');

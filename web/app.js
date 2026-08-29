@@ -266,19 +266,31 @@ const WEEK_CHART_CATEGORIES = [
 ];
 function weekPeriodLabel(startDate) { return `${shortDate(startDate)} → ${fullDate(RebootBudgetEngine.addDays(startDate, 6))}`; }
 function weekChartBreakdown(startDate) {
-  const endDate = RebootBudgetEngine.addDays(startDate, 6), values = Object.fromEntries(WEEK_CHART_CATEGORIES.map(category => [category.key, 0]));
+  const endDate = RebootBudgetEngine.addDays(startDate, 6), values = Object.fromEntries(WEEK_CHART_CATEGORIES.map(category => [category.key, 0])), daily = Array.from({ length: 7 }, (_, index) => ({ date: RebootBudgetEngine.addDays(startDate, index), amountMinor: 0 }));
+  let carriedMinor = 0;
   const allocations = activeAllocations().filter(allocation => allocation.cycleStart === startDate);
   allocations.forEach(allocation => {
     const expense = state.expenses.find(item => item.id === allocation.transactionId && !item.deletedAt);
     if (!expense) return;
     const key = WEEK_CHART_CATEGORIES.some(category => category.key === expense.nature) ? expense.nature : 'unspecified';
-    values[key] += Number(allocation.amountMinor || 0);
+    const amountMinor = Number(allocation.amountMinor || 0), offset = RebootBudgetEngine.daysBetween(startDate, expense.date), dayIndex = offset >= 0 && offset <= 6 ? offset : 0;
+    values[key] += amountMinor; daily[dayIndex].amountMinor += amountMinor; if (dayIndex === 0 && offset !== 0) carriedMinor += amountMinor;
   });
   const expenseMinor = Object.values(values).reduce((sum, value) => sum + value, 0);
   const transferMinor = state.reserveTransfers.filter(item => item.sourceType === 'weekly' && !item.deletedAt && item.date >= startDate && item.date <= endDate).reduce((sum, item) => sum + Number(item.amountMinor || 0), 0);
   const refundMinor = state.refunds.filter(item => item.applyToBudget && !item.health && !item.deletedAt && item.date >= startDate && item.date <= endDate).reduce((sum, item) => sum + Number(item.amountMinor || 0), 0);
   const cycle = state.weeklyCycles.find(item => item.startDate === startDate && !item.deletedAt), budgetMinor = Number(cycle?.budgetMinor ?? effectiveWeeklyBudgetMinor());
-  return { startDate, endDate, values, expenseMinor, transferMinor, refundMinor, budgetMinor, remainingMinor: budgetMinor - expenseMinor - transferMinor + refundMinor };
+  return { startDate, endDate, values, daily, carriedMinor, expenseMinor, transferMinor, refundMinor, budgetMinor, remainingMinor: budgetMinor - expenseMinor - transferMinor + refundMinor };
+}
+function chartAxisMoney(minor) { return new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'EUR', maximumFractionDigits: Number(minor) % 100 ? 2 : 0 }).format(Number(minor || 0) / 100); }
+function weekDailyChartHtml(chart) {
+  const width = 350, height = 210, left = 47, right = 8, top = 18, bottom = 43, plotWidth = width - left - right, plotHeight = height - top - bottom;
+  const highest = Math.max(0, ...chart.daily.map(day => day.amountMinor)), axisMaximum = Math.max(100, Math.ceil(highest / 100) * 100), x = index => left + index * plotWidth / 6, y = amount => top + plotHeight - (amount / axisMaximum * plotHeight);
+  const points = chart.daily.map((day, index) => `${x(index)},${y(day.amountMinor)}`).join(' '), area = `${left},${top + plotHeight} ${points} ${left + plotWidth},${top + plotHeight}`;
+  const ticks = [axisMaximum, Math.round(axisMaximum / 2), 0].map(amount => { const position = y(amount); return `<g><line class="week-daily-grid" x1="${left}" y1="${position}" x2="${left + plotWidth}" y2="${position}"></line><text class="week-daily-axis" x="${left - 6}" y="${position + 3}" text-anchor="end">${chartAxisMoney(amount)}</text></g>`; }).join('');
+  const days = chart.daily.map((day, index) => { const date = new Date(`${day.date}T12:00:00`), dayName = new Intl.DateTimeFormat('fr-FR', { weekday: 'short' }).format(date).replace('.', ''), dayNumber = new Intl.DateTimeFormat('fr-FR', { day: 'numeric' }).format(date), label = `${DAY_NAMES[date.getDay()]} ${dayNumber} : ${formatMoney(day.amountMinor)}`; return `<g class="week-daily-point" data-date="${day.date}" data-amount-minor="${day.amountMinor}" role="img" tabindex="0" aria-label="${label}"><circle cx="${x(index)}" cy="${y(day.amountMinor)}" r="4"></circle><title>${label}</title><text class="week-daily-day" x="${x(index)}" y="${height - 20}" text-anchor="middle">${dayName}</text><text class="week-daily-date" x="${x(index)}" y="${height - 7}" text-anchor="middle">${dayNumber}</text></g>`; }).join('');
+  const description = chart.daily.map(day => { const date = new Date(`${day.date}T12:00:00`); return `${DAY_NAMES[date.getDay()]} ${formatMoney(day.amountMinor)}`; }).join(', ');
+  return `<svg viewBox="0 0 ${width} ${height}" role="img" aria-labelledby="weekDailySvgTitle weekDailySvgDescription"><title id="weekDailySvgTitle">Montants dépensés par jour</title><desc id="weekDailySvgDescription">${description}</desc>${ticks}<polygon class="week-daily-area" points="${area}"></polygon><polyline class="week-daily-line" points="${points}"></polyline>${days}</svg>`;
 }
 function openWeekChart(startDate) {
   if (!startDate) return;
@@ -286,6 +298,7 @@ function openWeekChart(startDate) {
   $('#weekChartPeriod').textContent = weekPeriodLabel(startDate);
   $('#weekChartBudget').textContent = formatMoney(chart.budgetMinor); $('#weekChartSpent').textContent = formatMoney(chart.expenseMinor);
   $('#weekChartBalanceLabel').textContent = chart.remainingMinor < 0 ? 'Dépassement' : 'Restant'; $('#weekChartBalance').textContent = formatMoney(Math.abs(chart.remainingMinor)); $('#weekChartBalanceCard').classList.toggle('negative', chart.remainingMinor < 0);
+  $('#weekChartDaily').innerHTML = weekDailyChartHtml(chart); $('#weekChartDailyCarry').classList.toggle('hidden', !chart.carriedMinor); $('#weekChartDailyCarry').textContent = chart.carriedMinor ? `${formatMoney(chart.carriedMinor)} provenant de dépenses étalées antérieures sont placés au premier jour de cette courbe.` : '';
   $('#weekChartBars').innerHTML = visible.map(category => { const amount = chart.values[category.key], share = chart.expenseMinor ? Math.round(amount / chart.expenseMinor * 100) : 0, width = Math.max(3, amount / maximum * 100); return `<div class="week-chart-row"><span>${category.label}</span><div class="week-chart-track" aria-hidden="true"><span style="width:${width}%"></span></div><strong>${formatMoney(amount)} <small>${share}&nbsp;%</small></strong></div>`; }).join('');
   $('#weekChartEmpty').classList.toggle('hidden', Boolean(visible.length));
   const adjustments = [chart.transferMinor ? `Mis de côté : ${formatMoney(chart.transferMinor)}` : '', chart.refundMinor ? `Remboursements : ${formatMoney(chart.refundMinor)}` : ''].filter(Boolean);
@@ -724,7 +737,7 @@ $('#syncNoticeAction').onclick = () => $('#syncNow').click();
 
 (async function init() {
   try {
-    if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js?v=63', { updateViaCache: 'none' }).catch(() => {});
+    if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js?v=64', { updateViaCache: 'none' }).catch(() => {});
     // Drive starts its synchronization when drive.js loads. Render the encrypted local snapshot first so network latency never hides the budget.
     state = await loadState(); state.baseWeeklyBudgetMinor ||= state.weeklyBudgetMinor || 0; state.configured = Boolean(state.baseWeeklyBudgetMinor > 0 && state.rebootDay !== null && state.rebootDay !== undefined && state.rebootDay !== ''); const beforeWeeklyModel = JSON.stringify([state.weeklyCycles || [], state.allocations || []]), migrated = ensureHealthReserve(); synchronizeWeeklyModel(); if (migrated || beforeWeeklyModel !== JSON.stringify([state.weeklyCycles, state.allocations])) await saveState(); await refreshCalculatorStatus(); render(); showView(); const syncShown = showSyncCompleteNotice(), driveConfig = window.RebootDrive?.config?.() || {}; prepareWelcomeDialog(); if ((!state.configured && !state.onboarding?.storage && !syncShown) || (driveConfig.datasetSelectionRequired && driveConfig.remoteCandidates?.length)) $('#welcomeDialog').showModal(); finishInitialLoad();
   } catch (error) { state = defaultState(); ensureHealthReserve(); storageError = error?.message || 'Coffre local indisponible'; render(); showView(); $('#welcomeDialog').showModal(); finishInitialLoad(); }
