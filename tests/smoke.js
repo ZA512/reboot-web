@@ -192,6 +192,8 @@ try {
   await page.locator('#refundDate').fill(olderDate);
   await page.locator('#refundForm button[value="default"]').click();
   await assertContains(page.locator('#remaining'), '571,15');
+  await assertContains(page.locator('#historyList .movement-period'), 'Semaine terminée');
+  await assertContains(page.locator('#historyList .movement-period'), '→');
   const historicalCycle = await page.evaluate(async (expenseDate) => { const saved = await RebootSecureStorage.read('reboot-local-v1', 'reboot-local-v1'), expectedStart = RebootBudgetEngine.cycleStartForDate(expenseDate, saved.rebootDay), expense = saved.expenses.find(item => item.label === 'Test historique'), allocation = saved.allocations.find(item => item.transactionId === expense?.id && !item.deletedAt), cycle = saved.weeklyCycles.find(item => item.startDate === expectedStart && !item.deletedAt); return { expectedStart, allocationStart: allocation?.cycleStart, status: cycle?.status, budgetMinor: cycle?.budgetMinor }; }, olderDate);
   if (historicalCycle.allocationStart !== historicalCycle.expectedStart || historicalCycle.status !== 'closed' || !Number.isFinite(Number(historicalCycle.budgetMinor))) throw new Error(`A late historical entry must be assigned to its dated closed cycle: ${JSON.stringify(historicalCycle)}`);
   await page.goto(`${baseUrl}/app.html#tracking`, { waitUntil: 'networkidle' });
@@ -643,6 +645,10 @@ try {
   await assertContains(page.locator('#spreadPreview'), '9,33'); await assertContains(page.locator('#spreadPreview'), '9,34');
   await page.locator('#saveExpenseButton').click(); await page.locator('#expenseDialog').waitFor({ state: 'hidden' });
   await assertContains(page.locator('#remaining'), '90,67'); await assertContains(page.locator('#futureCommitmentList'), '9,34');
+  if (!(await page.locator('#currentWeekChartButton').isVisible())) throw new Error('The current week must expose its chart without adding another navigation entry');
+  await page.locator('#currentWeekChartButton').click(); await page.locator('#weekChartDialog').waitFor({ state: 'visible' });
+  await assertContains(page.locator('#weekChartPeriod'), '→'); await assertContains(page.locator('#weekChartSpent'), '9,33'); await assertContains(page.locator('#weekChartBars'), 'Non précisé');
+  await page.locator('#weekChartDialog button[value="close"]').last().click(); await page.locator('#weekChartDialog').waitFor({ state: 'hidden' });
   await assertContains(page.locator('#weekSpentTotal'), '9,33');
   if (await page.locator('#weekSpent').evaluate(element => element.open)) throw new Error('Current-week spending details must stay discreet and collapsed by default');
   await page.locator('#weekSpent summary').click();
@@ -683,6 +689,12 @@ try {
   for (const expected of ['180,00', '220,00', '+ 20,00', '− 40,00', '+ 15,00', '− 5,00']) if (!trackingText.includes(expected)) throw new Error(`Tracking must retain historical budgets and signed totals: missing ${expected}`);
   if (trackingText.includes('999,00')) throw new Error('The current open cycle must be excluded from tracking');
   if ((await page.locator('[data-tracking-weeks]').count()) !== 5) throw new Error('Tracking must expose 4, 8, 16, 32 and 52 week filters');
+  if ((await page.locator('#trackingList [data-week-chart]').count()) !== 3) throw new Error('Every completed week must expose its own chart action');
+  await page.locator('#trackingList [data-week-chart]').first().click(); await page.locator('#weekChartDialog').waitFor({ state: 'visible' });
+  await assertContains(page.locator('#weekChartSpent'), '100,00'); await assertContains(page.locator('#weekChartAdjustments'), '15,00');
+  await page.locator('#weekChartDialog button[value="close"]').last().click();
+  await page.goto(`${baseUrl}/app.html#movements`, { waitUntil: 'networkidle' });
+  if ((await page.locator('#allMovementsList .movement-period').count()) < 3) throw new Error('Movements from several cycles must be separated by visible weekly periods');
   console.log('PASS tracking excludes the current week, preserves historical budgets and totals signed gains and overages');
 
   await page.evaluate(async () => {

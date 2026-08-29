@@ -29,6 +29,7 @@ const snapshot = value => JSON.parse(JSON.stringify(value));
 const escapeHtml = value => String(value ?? '').replace(/[&<>"']/g, character => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' }[character]));
 const dateKey = date => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
 const shortDate = value => new Intl.DateTimeFormat('fr-FR', { day: 'numeric', month: 'short' }).format(new Date(`${value}T12:00:00`));
+const fullDate = value => new Intl.DateTimeFormat('fr-FR', { day: 'numeric', month: 'short', year: 'numeric' }).format(new Date(`${value}T12:00:00`));
 const formatMoney = minor => currency.format((Number(minor) || 0) / 100);
 const eurosToMinor = value => { const normalized = String(value ?? '').trim().replace(',', '.'); if (!normalized || !/^\d+(\.\d{1,2})?$/.test(normalized)) return 0; const [euros, cents = ''] = normalized.split('.'); return Number(euros) * 100 + Number((cents + '00').slice(0, 2)); };
 
@@ -227,10 +228,10 @@ function renderWeek() {
   $('#householdHeader').textContent = state.householdName || 'Notre foyer';
   const onboarding = Boolean(!cycle.configured && state.onboarding?.storage); $('#onboardingPanel').classList.toggle('hidden', !onboarding);
   if (!cycle.configured) {
-    $('#remaining').textContent = '—'; $('#budgetTotal').textContent = 'À définir'; $('#cycleDates').textContent = 'Non configuré'; $('#daysLeft').textContent = 'Préparez le budget'; $('#dailyGuide').textContent = '—'; $('#balanceTrack').style.width = '0%'; $('#weekSpent').classList.add('hidden'); $('#reserveDeduction').classList.add('hidden');
+    $('#remaining').textContent = '—'; $('#budgetTotal').textContent = 'À définir'; $('#cycleDates').textContent = 'Non configuré'; $('#daysLeft').textContent = 'Préparez le budget'; $('#dailyGuide').textContent = '—'; $('#balanceTrack').style.width = '0%'; $('#weekSpent').classList.add('hidden'); $('#currentWeekChartButton').classList.add('hidden'); $('#reserveDeduction').classList.add('hidden');
   } else {
     $('#remaining').textContent = formatMoney(cycle.remainingMinor); $('#remaining').classList.toggle('negative', cycle.remainingMinor < 0); $('#budgetTotal').textContent = formatMoney(cycle.budgetMinor); $('#cycleDates').textContent = `${shortDate(dateKey(cycle.start))} → ${shortDate(dateKey(cycle.end))}`; $('#daysLeft').textContent = cycle.daysLeft === 1 ? 'jusqu’à demain' : `${cycle.daysLeft} jours restants`; $('#dailyGuide').textContent = `${formatMoney(Math.max(0, cycle.remainingMinor) / cycle.daysLeft)} / jour`; $('#balanceTrack').style.width = `${cycle.budgetMinor ? Math.min(100, Math.max(0, (cycle.spentMinor - cycle.refundMinor) / cycle.budgetMinor * 100)) : 0}%`;
-    $('#weekSpent').classList.remove('hidden'); $('#weekSpentTotal').textContent = formatMoney(cycle.expenseMinor); $('#weekReservedTotal').textContent = formatMoney(cycle.transferMinor); $('#weekRefundTotal').textContent = formatMoney(cycle.refundMinor); $('#weekNetTotal').textContent = formatMoney(cycle.spentMinor - cycle.refundMinor);
+    $('#weekSpent').classList.remove('hidden'); $('#currentWeekChartButton').classList.remove('hidden'); $('#weekSpentTotal').textContent = formatMoney(cycle.expenseMinor); $('#weekReservedTotal').textContent = formatMoney(cycle.transferMinor); $('#weekRefundTotal').textContent = formatMoney(cycle.refundMinor); $('#weekNetTotal').textContent = formatMoney(cycle.spentMinor - cycle.refundMinor);
     const deduction = reserveDeductionMinor(); $('#reserveDeduction').classList.toggle('hidden', !deduction); $('#reserveDeduction').textContent = deduction ? `Réserves : − ${formatMoney(deduction)} / semaine` : '';
   }
   renderWeekMascot(cycle); renderSignal(cycle); renderCurrentExpenses(cycle); renderHealth(); renderWeekReserves(); renderFutureCommitments(); renderFreshness();
@@ -256,6 +257,42 @@ function closedCycleResult(cycle) {
   const spentMinor = allocated + transfers - refunds;
   return { ...cycle, spentMinor, resultMinor: Number(cycle.budgetMinor) - spentMinor };
 }
+const WEEK_CHART_CATEGORIES = [
+  { key: 'necessary', label: 'Nécessaire' },
+  { key: 'pleasure', label: 'Plaisir' },
+  { key: 'unexpected', label: 'Imprévu' },
+  { key: 'postponable', label: 'Reportable' },
+  { key: 'unspecified', label: 'Non précisé' }
+];
+function weekPeriodLabel(startDate) { return `${shortDate(startDate)} → ${fullDate(RebootBudgetEngine.addDays(startDate, 6))}`; }
+function weekChartBreakdown(startDate) {
+  const endDate = RebootBudgetEngine.addDays(startDate, 6), values = Object.fromEntries(WEEK_CHART_CATEGORIES.map(category => [category.key, 0]));
+  const allocations = activeAllocations().filter(allocation => allocation.cycleStart === startDate);
+  allocations.forEach(allocation => {
+    const expense = state.expenses.find(item => item.id === allocation.transactionId && !item.deletedAt);
+    if (!expense) return;
+    const key = WEEK_CHART_CATEGORIES.some(category => category.key === expense.nature) ? expense.nature : 'unspecified';
+    values[key] += Number(allocation.amountMinor || 0);
+  });
+  const expenseMinor = Object.values(values).reduce((sum, value) => sum + value, 0);
+  const transferMinor = state.reserveTransfers.filter(item => item.sourceType === 'weekly' && !item.deletedAt && item.date >= startDate && item.date <= endDate).reduce((sum, item) => sum + Number(item.amountMinor || 0), 0);
+  const refundMinor = state.refunds.filter(item => item.applyToBudget && !item.health && !item.deletedAt && item.date >= startDate && item.date <= endDate).reduce((sum, item) => sum + Number(item.amountMinor || 0), 0);
+  const cycle = state.weeklyCycles.find(item => item.startDate === startDate && !item.deletedAt), budgetMinor = Number(cycle?.budgetMinor ?? effectiveWeeklyBudgetMinor());
+  return { startDate, endDate, values, expenseMinor, transferMinor, refundMinor, budgetMinor, remainingMinor: budgetMinor - expenseMinor - transferMinor + refundMinor };
+}
+function openWeekChart(startDate) {
+  if (!startDate) return;
+  const chart = weekChartBreakdown(startDate), visible = WEEK_CHART_CATEGORIES.filter(category => chart.values[category.key] > 0), maximum = Math.max(1, ...visible.map(category => chart.values[category.key]));
+  $('#weekChartPeriod').textContent = weekPeriodLabel(startDate);
+  $('#weekChartBudget').textContent = formatMoney(chart.budgetMinor); $('#weekChartSpent').textContent = formatMoney(chart.expenseMinor);
+  $('#weekChartBalanceLabel').textContent = chart.remainingMinor < 0 ? 'Dépassement' : 'Restant'; $('#weekChartBalance').textContent = formatMoney(Math.abs(chart.remainingMinor)); $('#weekChartBalanceCard').classList.toggle('negative', chart.remainingMinor < 0);
+  $('#weekChartBars').innerHTML = visible.map(category => { const amount = chart.values[category.key], share = chart.expenseMinor ? Math.round(amount / chart.expenseMinor * 100) : 0, width = Math.max(3, amount / maximum * 100); return `<div class="week-chart-row"><span>${category.label}</span><div class="week-chart-track" aria-hidden="true"><span style="width:${width}%"></span></div><strong>${formatMoney(amount)} <small>${share}&nbsp;%</small></strong></div>`; }).join('');
+  $('#weekChartEmpty').classList.toggle('hidden', Boolean(visible.length));
+  const adjustments = [chart.transferMinor ? `Mis de côté : ${formatMoney(chart.transferMinor)}` : '', chart.refundMinor ? `Remboursements : ${formatMoney(chart.refundMinor)}` : ''].filter(Boolean);
+  $('#weekChartAdjustments').classList.toggle('hidden', !adjustments.length); $('#weekChartAdjustments').textContent = adjustments.join(' · ');
+  $('#weekChartDialog').showModal();
+}
+function bindWeekChartActions(root = document) { root.querySelectorAll('[data-week-chart]').forEach(button => button.onclick = () => openWeekChart(button.dataset.weekChart)); }
 function renderTracking() {
   const currentStart = state.configured ? allocationCycleStart(dateKey(new Date())) : '';
   const rows = state.weeklyCycles.filter(cycle => !cycle.deletedAt && cycle.status === 'closed' && cycle.startDate < currentStart && cycle.budgetMinor !== null && cycle.budgetMinor !== undefined && Number.isFinite(Number(cycle.budgetMinor))).sort((a, b) => b.startDate.localeCompare(a.startDate)).slice(0, trackingWeeks).map(closedCycleResult);
@@ -263,7 +300,8 @@ function renderTracking() {
   $('#trackingNet').textContent = `${net >= 0 ? '+' : '−'} ${formatMoney(Math.abs(net))}`; $('#trackingNet').classList.toggle('negative', net < 0);
   $('#trackingGains').textContent = `+ ${formatMoney(gains)}`; $('#trackingOverages').textContent = `− ${formatMoney(overages)}`;
   $('#trackingAvailable').textContent = rows.length < trackingWeeks ? `${rows.length} semaine${rows.length > 1 ? 's' : ''} disponible${rows.length > 1 ? 's' : ''}` : '';
-  $('#trackingList').innerHTML = rows.length ? `<div class="tracking-head"><span>Semaine</span><span>Budget</span><span>Dépensé</span><span>Écart</span></div>${rows.map(row => `<article class="tracking-row"><span>${shortDate(row.startDate)} → ${shortDate(row.endDate)}</span><span>${formatMoney(row.budgetMinor)}</span><span>${formatMoney(row.spentMinor)}</span><strong class="${row.resultMinor < 0 ? 'negative' : 'positive'}">${row.resultMinor >= 0 ? 'Gain +' : 'Dépassement −'} ${formatMoney(Math.abs(row.resultMinor))}</strong></article>`).join('')}` : '';
+  $('#trackingList').innerHTML = rows.length ? `<div class="tracking-head"><span>Semaine</span><span>Budget</span><span>Dépensé</span><span>Écart</span></div>${rows.map(row => `<article class="tracking-row"><span class="tracking-week-cell"><span>${shortDate(row.startDate)} → ${shortDate(row.endDate)}</span><button class="week-chart-trigger" type="button" data-week-chart="${row.startDate}" aria-label="Voir le graphique de la semaine du ${shortDate(row.startDate)}" title="Graphique de la semaine">▥</button></span><span>${formatMoney(row.budgetMinor)}</span><span>${formatMoney(row.spentMinor)}</span><strong class="${row.resultMinor < 0 ? 'negative' : 'positive'}">${row.resultMinor >= 0 ? 'Gain +' : 'Dépassement −'} ${formatMoney(Math.abs(row.resultMinor))}</strong></article>`).join('')}` : '';
+  bindWeekChartActions($('#trackingList'));
   $('#trackingEmpty').classList.toggle('hidden', Boolean(rows.length));
 }
 
@@ -294,11 +332,20 @@ function entryHtml(entry) {
   return `<article class="expense-item movement-${type.key}"><div class="expense-symbol">−</div><div><div class="expense-label">${escapeHtml(entry.label)}</div><div class="expense-meta"><span class="movement-type">${type.label}</span><span>${shortDate(entry.date)}${fundingDetail ? ` · ${fundingDetail}` : ''}${spreadLabel}${nature ? ` · ${nature}` : ''}</span></div></div><div class="expense-amount">− ${formatMoney(entry.amountMinor)}</div><div class="expense-actions"><button class="delete-expense" data-edit-expense="${entry.id}">Modifier</button><button class="delete-expense" data-delete="${entry.id}">Supprimer</button></div></article>`;
 }
 function allEntries() { return [...state.expenses.filter(item => !item.deletedAt).map(item => ({ ...item, entryType: 'expense' })), ...state.refunds.filter(item => !item.deletedAt).map(item => ({ ...item, entryType: 'refund' }))].sort((a, b) => `${b.date}${b.createdAt}`.localeCompare(`${a.date}${a.createdAt}`)); }
+function groupedEntriesHtml(entries) {
+  if (!state.configured || state.rebootDay === null || state.rebootDay === undefined) return entries.map(entryHtml).join('');
+  const currentStart = allocationCycleStart(dateKey(new Date())); let previousStart = '';
+  return entries.map(entry => {
+    const start = allocationCycleStart(entry.date); let heading = '';
+    if (start !== previousStart) { const label = start === currentStart ? 'Semaine en cours' : start < currentStart ? 'Semaine terminée' : 'Semaine à venir'; heading = `<div class="movement-period"><span>${label}</span><strong>${weekPeriodLabel(start)}</strong></div>`; previousStart = start; }
+    return heading + entryHtml(entry);
+  }).join('');
+}
 function bindEntryActions(root = document) { root.querySelectorAll('[data-edit-expense]').forEach(button => button.onclick = () => openExpenseDialog(state.expenses.find(item => item.id === button.dataset.editExpense))); root.querySelectorAll('[data-delete]').forEach(button => button.onclick = () => deleteExpense(button.dataset.delete)); root.querySelectorAll('[data-edit-refund]').forEach(button => button.onclick = () => openRefundDialog(state.refunds.find(item => item.id === button.dataset.editRefund))); root.querySelectorAll('[data-delete-refund]').forEach(button => button.onclick = () => deleteRefund(button.dataset.deleteRefund)); }
 function renderCurrentExpenses(cycle) {
   const entries = !cycle.configured ? [] : allEntries().filter(entry => entry.date >= dateKey(cycle.start) && entry.date <= dateKey(cycle.end)).slice(0, 5);
   $('#expenseList').innerHTML = entries.map(entryHtml).join(''); $('#emptyState').classList.toggle('hidden', Boolean(entries.length)); bindEntryActions($('#expenseList'));
-  const historical = cycle.configured ? allEntries().filter(entry => entry.date < dateKey(cycle.start) || entry.date > dateKey(cycle.end)) : []; $('#historySection').classList.toggle('hidden', !historical.length); $('#historyList').innerHTML = historical.map(entryHtml).join(''); bindEntryActions($('#historyList'));
+  const historical = cycle.configured ? allEntries().filter(entry => entry.date < dateKey(cycle.start) || entry.date > dateKey(cycle.end)) : []; $('#historySection').classList.toggle('hidden', !historical.length); $('#historyList').innerHTML = groupedEntriesHtml(historical); bindEntryActions($('#historyList'));
 }
 function renderMovements() {
   const cycle = cycleInfo(), query = normalizeMovementSearch($('#movementSearch').value), compactQuery = query.replace(/[\s€]/g, '').replace(',', '.'); let entries = allEntries();
@@ -312,7 +359,7 @@ function renderMovements() {
     const decimal = (Math.abs(Number(entry.amountMinor || 0)) / 100).toFixed(2), sign = entry.entryType === 'refund' ? '+' : '-';
     return text.includes(query) || [decimal, `${sign}${decimal}`].some(token => token.includes(compactQuery));
   });
-  $('#allMovementsList').innerHTML = entries.map(entryHtml).join(''); $('#movementsEmpty').classList.toggle('hidden', Boolean(entries.length)); bindEntryActions($('#allMovementsList'));
+  $('#allMovementsList').innerHTML = groupedEntriesHtml(entries); $('#movementsEmpty').classList.toggle('hidden', Boolean(entries.length)); bindEntryActions($('#allMovementsList'));
 }
 function normalizeMovementSearch(value) { return String(value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLocaleLowerCase('fr-FR').replace(/\u00a0/g, ' ').trim(); }
 
@@ -634,7 +681,7 @@ function showWelcomeChoice(choice = 'storage') {
 function prepareWelcomeDialog() { const config = window.RebootDrive?.config?.() || {}; showWelcomeChoice(config.remoteCandidates?.length ? 'datasets' : config.syncPendingSetup ? 'drive' : 'storage'); }
 async function beginOnboarding(storage) { state.onboarding = { storage, startedAt: new Date().toISOString() }; await saveState(); $('#welcomeDialog').close(); location.assign('calculateur.html?onboarding=1'); }
 
-$('#addExpenseButton').onclick = () => openExpenseDialog(); $('#emptyAddButton').onclick = () => openExpenseDialog(); $('#movementAddButton').onclick = () => openExpenseDialog(); $('#addHealthExpenseButton').onclick = () => openExpenseDialog(null, true); $('#addRefundButton').onclick = () => openRefundDialog(); $('#addHealthRefundButton').onclick = () => openRefundDialog(null, true); $('#settingsButton').onclick = openSettings; $('#addReserveButton').onclick = () => openReserveDialog(); $('#addChargeButton').onclick = () => openChargeDialog(); $('#rebalanceHealthButton').onclick = openRebalanceDialog; $('#applyRecommendedBudget').onclick = applyRecommendedBudget;
+$('#addExpenseButton').onclick = () => openExpenseDialog(); $('#emptyAddButton').onclick = () => openExpenseDialog(); $('#movementAddButton').onclick = () => openExpenseDialog(); $('#addHealthExpenseButton').onclick = () => openExpenseDialog(null, true); $('#addRefundButton').onclick = () => openRefundDialog(); $('#addHealthRefundButton').onclick = () => openRefundDialog(null, true); $('#settingsButton').onclick = openSettings; $('#addReserveButton').onclick = () => openReserveDialog(); $('#addChargeButton').onclick = () => openChargeDialog(); $('#rebalanceHealthButton').onclick = openRebalanceDialog; $('#applyRecommendedBudget').onclick = applyRecommendedBudget; $('#currentWeekChartButton').onclick = () => { const cycle = cycleInfo(); if (cycle.configured) openWeekChart(dateKey(cycle.start)); };
 $('#expenseForm').onsubmit = saveExpense; $('#refundForm').onsubmit = saveRefund; $('#reserveForm').onsubmit = saveReserve; $('#chargeForm').onsubmit = saveCharge; $('#rebalanceForm').onsubmit = saveRebalance; $('#settingsForm').onsubmit = saveSettings;
 $('#chargeAmount').oninput = updateChargeFrequencyControls; $('#chargeFrequency').onchange = updateChargeFrequencyControls; $('#chargeType').onchange = updateChargeFrequencyControls;
 $$('input[name="funding"]').forEach(input => input.onchange = () => { if (input.checked) $('#expenseHealth').checked = false; toggleReserveChoice(); }); $('#expenseHealth').onchange = () => { if ($('#expenseHealth').checked) $$('input[name="funding"]').forEach(input => { input.checked = false; }); else document.querySelector('input[name="funding"][value="weekly"]').checked = true; toggleReserveChoice(); }; $('#refundHealth').onchange = () => { const health = $('#refundHealth').checked; $('#refundApplyField').classList.toggle('hidden', health); if (health) $('#refundApply').checked = false; }; $('#refundExpense').onchange = () => { const expense = state.expenses.find(item => item.id === $('#refundExpense').value); if (expense?.health) { $('#refundHealth').checked = true; $('#refundHealth').dispatchEvent(new Event('change')); } };
@@ -677,7 +724,7 @@ $('#syncNoticeAction').onclick = () => $('#syncNow').click();
 
 (async function init() {
   try {
-    if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js?v=62', { updateViaCache: 'none' }).catch(() => {});
+    if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js?v=63', { updateViaCache: 'none' }).catch(() => {});
     // Drive starts its synchronization when drive.js loads. Render the encrypted local snapshot first so network latency never hides the budget.
     state = await loadState(); state.baseWeeklyBudgetMinor ||= state.weeklyBudgetMinor || 0; state.configured = Boolean(state.baseWeeklyBudgetMinor > 0 && state.rebootDay !== null && state.rebootDay !== undefined && state.rebootDay !== ''); const beforeWeeklyModel = JSON.stringify([state.weeklyCycles || [], state.allocations || []]), migrated = ensureHealthReserve(); synchronizeWeeklyModel(); if (migrated || beforeWeeklyModel !== JSON.stringify([state.weeklyCycles, state.allocations])) await saveState(); await refreshCalculatorStatus(); render(); showView(); const syncShown = showSyncCompleteNotice(), driveConfig = window.RebootDrive?.config?.() || {}; prepareWelcomeDialog(); if ((!state.configured && !state.onboarding?.storage && !syncShown) || (driveConfig.datasetSelectionRequired && driveConfig.remoteCandidates?.length)) $('#welcomeDialog').showModal(); finishInitialLoad();
   } catch (error) { state = defaultState(); ensureHealthReserve(); storageError = error?.message || 'Coffre local indisponible'; render(); showView(); $('#welcomeDialog').showModal(); finishInitialLoad(); }
