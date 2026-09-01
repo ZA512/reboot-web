@@ -16,6 +16,18 @@ function acceptConfirmation(page) {
 }
 
 try {
+  await page.goto(`${baseUrl}/index.html`, { waitUntil: 'networkidle' });
+  await assertContains(page.locator('h1'), 'Vous finissez chaque mois dans le vert');
+  if ((await page.locator('[data-story-step]').count()) !== 7) throw new Error('The concept page must keep one clear idea per story panel');
+  if ((await page.locator('.story-art img').count()) !== 4) throw new Error('The concept page must load its four reserved visual scenes');
+  await page.goto(`${baseUrl}/methode.html`, { waitUntil: 'networkidle' });
+  await assertContains(page.locator('h1'), 'Prévoir sur l’année');
+  await assertContains(page.locator('#classer'), 'Une dépense, une seule place');
+  await assertContains(page.locator('#cas'), 'Les cas particuliers');
+  await page.goto(`${baseUrl}/index.html?method=1#methode`, { waitUntil: 'networkidle' });
+  await page.waitForURL('**/methode.html');
+  console.log('PASS concept story and detailed method remain directly accessible');
+
   await page.goto(`${baseUrl}/app.html`, { waitUntil: 'networkidle' });
   if (await page.locator('body').evaluate(element => element.classList.contains('app-loading'))) throw new Error('The opening screen must disappear once the budget is ready');
   if (!(await page.evaluate(() => Boolean(window.crypto?.subtle)))) throw new Error('Web Crypto is unavailable in the Docker browser context');

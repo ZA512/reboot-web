@@ -1,9 +1,10 @@
-const CACHE_NAME = 'reboot-shell-v64';
+const CACHE_NAME = 'reboot-shell-v65';
 const SHELL = [
   './app.html',
   './version.txt',
   './app.css',
   './brand-theme.css',
+  './concept.css',
   './app-shell.css',
   './data-page.css',
   './verifier.css',
@@ -11,6 +12,7 @@ const SHELL = [
   './verifier.js',
   './budget-engine.js',
   './entry.js',
+  './concept.js',
   './secure-storage.js',
   './archive.js',
   './drive.js',
@@ -36,6 +38,10 @@ const SHELL = [
   './pictures/dancing.png',
   './pictures/surprised.png',
   './pictures/sleepy-back.png',
+  './pictures/concept-solde-v1.webp',
+  './pictures/concept-mois-v1.webp',
+  './pictures/concept-annuel-v1.webp',
+  './pictures/concept-semaine-v1.webp',
   './historique.html',
   './verifier.html',
   './sauvegarde.html',
@@ -44,6 +50,7 @@ const SHELL = [
   './drive.html',
   './manifest.webmanifest',
   './index.html',
+  './methode.html',
   './calculateur.html'
 ];
 
