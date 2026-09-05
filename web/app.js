@@ -336,43 +336,78 @@ function movementType(entry) {
   if (entry.funding === 'transfer') return { key: 'transfer', label: 'Transfert' };
   return { key: 'weekly', label: 'Semaine' };
 }
+function entryCycleStart(entry) {
+  if (entry.displayCycleStart) return entry.displayCycleStart;
+  return state.configured && state.rebootDay !== null && state.rebootDay !== undefined ? allocationCycleStart(entry.date) : entry.date;
+}
 function entryHtml(entry) {
   const type = movementType(entry), isRefund = entry.entryType === 'refund';
-  if (isRefund) return `<article class="expense-item refund movement-${type.key}"><div class="expense-symbol">+</div><div><div class="expense-label">${escapeHtml(entry.label)}</div><div class="expense-meta"><span class="movement-type">${type.label}</span><span>${shortDate(entry.date)}</span></div></div><div class="expense-amount">+ ${formatMoney(entry.amountMinor)}</div><div class="expense-actions"><button class="delete-expense" data-edit-refund="${entry.id}">Modifier</button><button class="delete-expense" data-delete-refund="${entry.id}">Supprimer</button></div></article>`;
+  const duplicateNote = entry.duplicateMatches?.length ? `<div class="possible-duplicate">Même montant saisi aussi ${entry.duplicateMatches.length === 1 ? 'le' : 'les'} ${entry.duplicateMatches.map(item => shortDate(item.date)).join(', ')}</div>` : '';
+  if (isRefund) return `<article class="expense-item refund movement-${type.key}"><div class="expense-symbol">+</div><div><div class="expense-label">${escapeHtml(entry.label)}</div><div class="expense-meta"><span class="movement-type">${type.label}</span><span>${shortDate(entry.date)}</span></div>${duplicateNote}</div><div class="expense-amount positive">+ ${formatMoney(entry.amountMinor)}</div><div class="expense-actions"><button class="delete-expense" data-edit-refund="${entry.id}">Modifier</button><button class="delete-expense" data-delete-refund="${entry.id}">Supprimer</button></div></article>`;
   const fundingDetail = type.key === 'reserve' && entry.reserveName ? escapeHtml(entry.reserveName) : type.key === 'tracked' && entry.chargeName ? escapeHtml(entry.chargeName) : '';
   const nature = ({ necessary: 'Nécessaire', pleasure: 'Plaisir', postponable: 'Reportable', unexpected: 'Imprévu' })[entry.nature] || '';
-  const allocationCount = activeAllocations(entry.id).length, spreadLabel = allocationCount > 1 ? ` · étalée sur ${allocationCount} semaines` : '';
-  return `<article class="expense-item movement-${type.key}"><div class="expense-symbol">−</div><div><div class="expense-label">${escapeHtml(entry.label)}</div><div class="expense-meta"><span class="movement-type">${type.label}</span><span>${shortDate(entry.date)}${fundingDetail ? ` · ${fundingDetail}` : ''}${spreadLabel}${nature ? ` · ${nature}` : ''}</span></div></div><div class="expense-amount">− ${formatMoney(entry.amountMinor)}</div><div class="expense-actions"><button class="delete-expense" data-edit-expense="${entry.id}">Modifier</button><button class="delete-expense" data-delete="${entry.id}">Supprimer</button></div></article>`;
+  const allocationCount = Number(entry.allocationCount || activeAllocations(entry.id).length), spreadLabel = allocationCount > 1 ? ` · étalée sur ${allocationCount} semaines · total payé ${formatMoney(entry.amountMinor)}` : '';
+  const allocationLabel = allocationCount > 1 && entry.allocationSequence ? ` · part ${entry.allocationSequence}/${allocationCount}` : '';
+  const displayedAmount = entry.displayAmountMinor ?? entry.amountMinor;
+  return `<article class="expense-item movement-${type.key}"><div class="expense-symbol">−</div><div><div class="expense-label">${escapeHtml(entry.label)}</div><div class="expense-meta"><span class="movement-type">${type.label}</span><span>${shortDate(entry.date)}${fundingDetail ? ` · ${fundingDetail}` : ''}${allocationLabel}${spreadLabel}${nature ? ` · ${nature}` : ''}</span></div>${duplicateNote}</div><div class="expense-amount">− ${formatMoney(displayedAmount)}</div><div class="expense-actions"><button class="delete-expense" data-edit-expense="${entry.id}">Modifier</button><button class="delete-expense" data-delete="${entry.id}">Supprimer</button></div></article>`;
 }
 function allEntries() { return [...state.expenses.filter(item => !item.deletedAt).map(item => ({ ...item, entryType: 'expense' })), ...state.refunds.filter(item => !item.deletedAt).map(item => ({ ...item, entryType: 'refund' }))].sort((a, b) => `${b.date}${b.createdAt}`.localeCompare(`${a.date}${a.createdAt}`)); }
+function displayEntries() {
+  const currentStart = state.configured && state.rebootDay !== null && state.rebootDay !== undefined ? allocationCycleStart(dateKey(new Date())) : '';
+  const expenses = state.expenses.filter(item => !item.deletedAt).flatMap(expense => {
+    const allocations = expense.funding === 'weekly' ? activeAllocations(expense.id).sort((a, b) => a.cycleStart.localeCompare(b.cycleStart)) : [];
+    if (allocations.length <= 1) return [{ ...expense, entryType: 'expense', displayCycleStart: allocations[0]?.cycleStart || '' }];
+    const visible = allocations.filter(allocation => !currentStart || allocation.cycleStart <= currentStart);
+    if (!visible.length) return [{ ...expense, entryType: 'expense', displayCycleStart: allocationCycleStart(expense.date), allocationCount: allocations.length }];
+    return visible.map(allocation => ({ ...expense, entryType: 'expense', displayCycleStart: allocation.cycleStart, displayAmountMinor: Number(allocation.amountMinor || 0), allocationSequence: Number(allocation.sequence || 0), allocationCount: allocations.length }));
+  });
+  const refunds = state.refunds.filter(item => !item.deletedAt).map(item => ({ ...item, entryType: 'refund' }));
+  return [...expenses, ...refunds].sort((a, b) => `${entryCycleStart(b)}${b.date}${b.createdAt || ''}${b.allocationSequence || 0}`.localeCompare(`${entryCycleStart(a)}${a.date}${a.createdAt || ''}${a.allocationSequence || 0}`));
+}
+function possibleDuplicateMap() {
+  const entries = allEntries(), matches = new Map(), key = entry => `${entry.entryType}:${entry.id}`;
+  for (let index = 0; index < entries.length; index += 1) {
+    for (let candidateIndex = index + 1; candidateIndex < entries.length; candidateIndex += 1) {
+      const entry = entries[index], candidate = entries[candidateIndex];
+      if (entry.entryType !== candidate.entryType || Number(entry.amountMinor || 0) !== Number(candidate.amountMinor || 0) || Math.abs(RebootBudgetEngine.daysBetween(entry.date, candidate.date)) > 5) continue;
+      matches.set(key(entry), [...(matches.get(key(entry)) || []), candidate]);
+      matches.set(key(candidate), [...(matches.get(key(candidate)) || []), entry]);
+    }
+  }
+  return matches;
+}
 function groupedEntriesHtml(entries) {
   if (!state.configured || state.rebootDay === null || state.rebootDay === undefined) return entries.map(entryHtml).join('');
   const currentStart = allocationCycleStart(dateKey(new Date())); let previousStart = '';
   return entries.map(entry => {
-    const start = allocationCycleStart(entry.date); let heading = '';
+    const start = entryCycleStart(entry); let heading = '';
     if (start !== previousStart) { const label = start === currentStart ? 'Semaine en cours' : start < currentStart ? 'Semaine terminée' : 'Semaine à venir'; heading = `<div class="movement-period"><span>${label}</span><strong>${weekPeriodLabel(start)}</strong></div>`; previousStart = start; }
     return heading + entryHtml(entry);
   }).join('');
 }
 function bindEntryActions(root = document) { root.querySelectorAll('[data-edit-expense]').forEach(button => button.onclick = () => openExpenseDialog(state.expenses.find(item => item.id === button.dataset.editExpense))); root.querySelectorAll('[data-delete]').forEach(button => button.onclick = () => deleteExpense(button.dataset.delete)); root.querySelectorAll('[data-edit-refund]').forEach(button => button.onclick = () => openRefundDialog(state.refunds.find(item => item.id === button.dataset.editRefund))); root.querySelectorAll('[data-delete-refund]').forEach(button => button.onclick = () => deleteRefund(button.dataset.deleteRefund)); }
 function renderCurrentExpenses(cycle) {
-  const entries = !cycle.configured ? [] : allEntries().filter(entry => entry.date >= dateKey(cycle.start) && entry.date <= dateKey(cycle.end)).slice(0, 5);
+  const currentStart = cycle.configured ? dateKey(cycle.start) : '', visibleEntries = displayEntries();
+  const entries = !cycle.configured ? [] : visibleEntries.filter(entry => entryCycleStart(entry) === currentStart).slice(0, 5);
   $('#expenseList').innerHTML = entries.map(entryHtml).join(''); $('#emptyState').classList.toggle('hidden', Boolean(entries.length)); bindEntryActions($('#expenseList'));
-  const historical = cycle.configured ? allEntries().filter(entry => entry.date < dateKey(cycle.start) || entry.date > dateKey(cycle.end)) : []; $('#historySection').classList.toggle('hidden', !historical.length); $('#historyList').innerHTML = groupedEntriesHtml(historical); bindEntryActions($('#historyList'));
+  const historical = cycle.configured ? visibleEntries.filter(entry => entryCycleStart(entry) !== currentStart) : []; $('#historySection').classList.toggle('hidden', !historical.length); $('#historyList').innerHTML = groupedEntriesHtml(historical); bindEntryActions($('#historyList'));
 }
 function renderMovements() {
-  const cycle = cycleInfo(), query = normalizeMovementSearch($('#movementSearch').value), compactQuery = query.replace(/[\s€]/g, '').replace(',', '.'); let entries = allEntries();
-  if (movementFilter === 'week' && cycle.configured) entries = entries.filter(entry => entry.date >= dateKey(cycle.start) && entry.date <= dateKey(cycle.end));
+  const cycle = cycleInfo(), query = normalizeMovementSearch($('#movementSearch').value), compactQuery = query.replace(/[\s€]/g, '').replace(',', '.'), duplicates = possibleDuplicateMap(), duplicateKey = entry => `${entry.entryType}:${entry.id}`;
+  let entries = movementFilter === 'duplicates' ? allEntries().filter(entry => duplicates.has(duplicateKey(entry))).map(entry => ({ ...entry, duplicateMatches: duplicates.get(duplicateKey(entry)) })) : displayEntries();
+  if (movementFilter === 'week' && cycle.configured) entries = entries.filter(entry => entryCycleStart(entry) === dateKey(cycle.start));
   if (movementFilter === 'budget') entries = entries.filter(entry => entry.entryType === 'expense' && movementType(entry).key === 'weekly');
   if (movementFilter === 'charges') entries = entries.filter(entry => ['charge', 'tracked'].includes(movementType(entry).key));
   if (movementFilter === 'health') entries = entries.filter(entry => entry.health || entry.entryType === 'refund' && isHealthRefund(entry));
   if (movementFilter === 'refund') entries = entries.filter(entry => entry.entryType === 'refund');
   if (query) entries = entries.filter(entry => {
     const type = movementType(entry), text = normalizeMovementSearch(`${entry.label} ${type.label} ${entry.reserveName || ''} ${entry.chargeName || ''}`);
-    const decimal = (Math.abs(Number(entry.amountMinor || 0)) / 100).toFixed(2), sign = entry.entryType === 'refund' ? '+' : '-';
-    return text.includes(query) || [decimal, `${sign}${decimal}`].some(token => token.includes(compactQuery));
+    const sign = entry.entryType === 'refund' ? '+' : '-', amounts = [...new Set([entry.displayAmountMinor ?? entry.amountMinor, entry.amountMinor].map(value => (Math.abs(Number(value || 0)) / 100).toFixed(2)))];
+    return text.includes(query) || amounts.flatMap(decimal => [decimal, `${sign}${decimal}`]).some(token => token.includes(compactQuery));
   });
-  $('#allMovementsList').innerHTML = groupedEntriesHtml(entries); $('#movementsEmpty').classList.toggle('hidden', Boolean(entries.length)); bindEntryActions($('#allMovementsList'));
+  $('#allMovementsList').innerHTML = groupedEntriesHtml(entries); $('#movementsEmpty').classList.toggle('hidden', Boolean(entries.length));
+  $('#movementsEmpty h3').textContent = movementFilter === 'duplicates' ? 'Aucun doublon apparent' : 'Aucun résultat'; $('#movementsEmpty p').textContent = movementFilter === 'duplicates' ? 'Aucun montant identique saisi à moins de cinq jours d’intervalle.' : 'Modifiez votre recherche ou ajoutez un montant.';
+  bindEntryActions($('#allMovementsList'));
 }
 function normalizeMovementSearch(value) { return String(value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLocaleLowerCase('fr-FR').replace(/\u00a0/g, ' ').trim(); }
 
@@ -737,7 +772,7 @@ $('#syncNoticeAction').onclick = () => $('#syncNow').click();
 
 (async function init() {
   try {
-    if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js?v=65', { updateViaCache: 'none' }).catch(() => {});
+    if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js?v=66', { updateViaCache: 'none' }).catch(() => {});
     // Drive starts its synchronization when drive.js loads. Render the encrypted local snapshot first so network latency never hides the budget.
     state = await loadState(); state.baseWeeklyBudgetMinor ||= state.weeklyBudgetMinor || 0; state.configured = Boolean(state.baseWeeklyBudgetMinor > 0 && state.rebootDay !== null && state.rebootDay !== undefined && state.rebootDay !== ''); const beforeWeeklyModel = JSON.stringify([state.weeklyCycles || [], state.allocations || []]), migrated = ensureHealthReserve(); synchronizeWeeklyModel(); if (migrated || beforeWeeklyModel !== JSON.stringify([state.weeklyCycles, state.allocations])) await saveState(); await refreshCalculatorStatus(); render(); showView(); const syncShown = showSyncCompleteNotice(), driveConfig = window.RebootDrive?.config?.() || {}; prepareWelcomeDialog(); if ((!state.configured && !state.onboarding?.storage && !syncShown) || (driveConfig.datasetSelectionRequired && driveConfig.remoteCandidates?.length)) $('#welcomeDialog').showModal(); finishInitialLoad();
   } catch (error) { state = defaultState(); ensureHealthReserve(); storageError = error?.message || 'Coffre local indisponible'; render(); showView(); $('#welcomeDialog').showModal(); finishInitialLoad(); }

@@ -5,12 +5,12 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="theme-color" content="#B8325D">
   <meta name="description" content="REBOOT, le suivi du budget du foyer semaine après semaine.">
-  <meta name="reboot-build" content="2026-08-29-week-daily-line-1">
+  <meta name="reboot-build" content="2026-09-05-spread-duplicates-1">
   <link rel="icon" href="icons/favicon.ico" sizes="any">
   <link rel="icon" href="icons/favicon-32.png" type="image/png" sizes="32x32">
   <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
   <link rel="manifest" href="manifest.webmanifest">
-  <link rel="stylesheet" href="app.css?v=64">
+  <link rel="stylesheet" href="app.css?v=66">
   <link rel="stylesheet" href="brand-theme.css?v=57">
   <title>REBOOT — Semaine</title>
 </head>
@@ -39,7 +39,7 @@
     <section class="app-view hidden" id="movementsView" data-view-panel="movements">
       <div class="view-head"><div><p class="kicker">Toutes les opérations</p><h1>Mouvements</h1><p>Consultez et corrigez ce que vous avez saisi.</p></div><img class="view-mascot" src="pictures/surprised.png" alt="" aria-hidden="true" loading="lazy"><button class="button button-primary" id="movementAddButton" type="button">＋ Ajouter</button></div>
       <input class="search-input" id="movementSearch" type="search" placeholder="Rechercher un libellé ou un montant…" aria-label="Rechercher un mouvement par libellé ou montant">
-      <div class="filter-row" id="movementFilters"><button class="filter-chip" data-movement-filter="all" aria-pressed="true">Tout</button><button class="filter-chip" data-movement-filter="week" aria-pressed="false">Cette semaine</button><button class="filter-chip" data-movement-filter="budget" aria-pressed="false">Budget semaine</button><button class="filter-chip" data-movement-filter="charges" aria-pressed="false">Charges</button><button class="filter-chip" data-movement-filter="health" aria-pressed="false">Santé</button><button class="filter-chip" data-movement-filter="refund" aria-pressed="false">Remboursements</button></div>
+      <div class="filter-row" id="movementFilters"><button class="filter-chip" data-movement-filter="all" aria-pressed="true">Tout</button><button class="filter-chip" data-movement-filter="week" aria-pressed="false">Cette semaine</button><button class="filter-chip" data-movement-filter="budget" aria-pressed="false">Budget semaine</button><button class="filter-chip" data-movement-filter="charges" aria-pressed="false">Charges</button><button class="filter-chip" data-movement-filter="health" aria-pressed="false">Santé</button><button class="filter-chip" data-movement-filter="refund" aria-pressed="false">Remboursements</button><button class="filter-chip" data-movement-filter="duplicates" aria-pressed="false">Doublons possibles</button></div>
       <div class="expense-list" id="allMovementsList"></div><div class="empty-state hidden" id="movementsEmpty"><img class="empty-mascot" src="pictures/questionning.png" alt="" aria-hidden="true" loading="lazy"><h3>Aucun résultat</h3><p>Modifiez votre recherche ou ajoutez un montant.</p></div>
     </section>
 
@@ -84,6 +84,6 @@
 
   <dialog id="settingsDialog" class="dialog"><form method="dialog" id="settingsForm" novalidate><div class="dialog-header"><div><p class="kicker">Réglages</p><h2>Votre foyer</h2></div><button class="close-button" formnovalidate value="cancel" type="submit">×</button></div><div class="field"><label for="householdName">Nom du foyer</label><input id="householdName" type="text" maxlength="60"></div><div class="field"><label for="weeklyBudget">Budget hebdomadaire avant réserves</label><div class="money-input"><input id="weeklyBudget" type="number" min="0" step="0.01" required><span>€</span></div><small class="field-help" id="weeklyBudgetHelp"></small></div><div class="field"><label for="rebootDay">Jour REBOOT</label><select id="rebootDay" required><option value="">Choisir un jour</option><option value="1">Lundi</option><option value="2">Mardi</option><option value="3">Mercredi</option><option value="4">Jeudi</option><option value="5">Vendredi</option><option value="6">Samedi</option><option value="0">Dimanche</option></select></div><div class="choice-list"><a class="choice" href="sauvegarde.html"><span><strong>Sauvegardes</strong><small>Créer ou restaurer un fichier.</small></span></a><a class="choice" href="drive.html"><span><strong>Google Drive</strong><small>Voir l’état de la synchronisation.</small></span></a><a class="choice" href="verifier.html"><span><strong>Vérifier les opérations</strong><small>Importer un relevé bancaire et pointer les dépenses.</small></span></a><a class="choice" href="historique.html"><span><strong>Journal des modifications</strong><small>Retrouver les corrections effectuées.</small></span></a><a class="choice" href="methode.html"><span><strong>La méthode</strong><small>Comprendre le fonctionnement de REBOOT.</small></span></a></div><div class="dialog-actions"><button class="button button-secondary" formnovalidate value="cancel" type="submit">Annuler</button><button class="button button-primary" value="default" type="submit">Enregistrer</button></div></form></dialog>
 
-  <script src="secure-storage.js?v=57" defer></script><script src="archive.js?v=57" defer></script><script src="drive.js?v=58" defer></script><script src="budget-engine.js?v=57" defer></script><script src="app.js?v=65" defer></script>
+  <script src="secure-storage.js?v=57" defer></script><script src="archive.js?v=57" defer></script><script src="drive.js?v=58" defer></script><script src="budget-engine.js?v=57" defer></script><script src="app.js?v=66" defer></script>
 </body>
 </html>

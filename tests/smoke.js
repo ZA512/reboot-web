@@ -158,6 +158,29 @@ try {
   await page.locator('#movementSearch').fill('');
   await page.locator('[data-movement-filter="health"]').click();
   await assertContains(page.locator('#allMovementsList'), 'Test correction');
+  await page.evaluate(async () => {
+    const saved = await RebootSecureStorage.read('reboot-local-v1', 'reboot-local-v1'), engine = RebootBudgetEngine, today = engine.dateKey(new Date()), now = new Date().toISOString();
+    const dated = days => engine.addDays(today, days);
+    saved.expenses.push(
+      { id: 'duplicate-a', date: today, amountMinor: 8765, label: 'Premier montant identique', funding: 'transfer', createdAt: now },
+      { id: 'duplicate-b', date: dated(-3), amountMinor: 8765, label: 'Second montant identique', funding: 'transfer', createdAt: now },
+      { id: 'duplicate-too-old', date: dated(-12), amountMinor: 8765, label: 'Même montant trop ancien', funding: 'transfer', createdAt: now },
+      { id: 'duplicate-other-amount', date: today, amountMinor: 8766, label: 'Montant différent', funding: 'transfer', createdAt: now }
+    );
+    saved.refunds.push({ id: 'positive-test', date: today, amountMinor: 8765, label: 'Entrée positive distincte', applyToBudget: false, health: false, createdAt: now });
+    await RebootSecureStorage.save('reboot-local-v1', saved);
+  });
+  await page.reload({ waitUntil: 'networkidle' });
+  await page.locator('[data-movement-filter="duplicates"]').click();
+  if ((await page.locator('#allMovementsList .expense-item').count()) !== 2) throw new Error('Possible duplicates must compare equal signed amounts within five days only');
+  await assertContains(page.locator('#allMovementsList'), 'Premier montant identique'); await assertContains(page.locator('#allMovementsList'), 'Second montant identique'); await assertContains(page.locator('#allMovementsList'), 'Même montant saisi aussi');
+  if ((await page.locator('#allMovementsList', { hasText: 'Même montant trop ancien' }).count()) || (await page.locator('#allMovementsList', { hasText: 'Entrée positive distincte' }).count())) throw new Error('Duplicate suggestions must exclude older matches and opposite signs');
+  await page.locator('[data-movement-filter="all"]').click();
+  const positiveColor = await page.locator('#allMovementsList .expense-item', { hasText: 'Entrée positive distincte' }).locator('.expense-amount').evaluate(element => getComputedStyle(element).color);
+  if (positiveColor !== 'rgb(47, 125, 104)') throw new Error(`Positive movements must use the reassuring green color, got ${positiveColor}`);
+  await page.evaluate(async () => { const saved = await RebootSecureStorage.read('reboot-local-v1', 'reboot-local-v1'), ids = new Set(['duplicate-a', 'duplicate-b', 'duplicate-too-old', 'duplicate-other-amount']); saved.expenses = saved.expenses.filter(item => !ids.has(item.id)); saved.refunds = saved.refunds.filter(item => item.id !== 'positive-test'); await RebootSecureStorage.save('reboot-local-v1', saved); });
+  await page.reload({ waitUntil: 'networkidle' }); await page.locator('[data-movement-filter="health"]').click();
+  console.log('PASS movements expose visual five-day duplicate suggestions and positive amounts are green');
   await page.goto(`${baseUrl}/app.html#reserves`, { waitUntil: 'networkidle' });
   await assertContains(page.locator('#healthCurrentBalance'), '-60,00');
   await assertContains(page.locator('.health-help .tooltip'), 'solde estimé');
@@ -657,6 +680,7 @@ try {
   await assertContains(page.locator('#spreadPreview'), '9,33'); await assertContains(page.locator('#spreadPreview'), '9,34');
   await page.locator('#saveExpenseButton').click(); await page.locator('#expenseDialog').waitFor({ state: 'hidden' });
   await assertContains(page.locator('#remaining'), '90,67'); await assertContains(page.locator('#futureCommitmentList'), '9,34');
+  const currentSpread = page.locator('#expenseList article', { hasText: 'Achat étalé' }); await assertContains(currentSpread.locator('.expense-amount'), '9,33'); await assertContains(currentSpread, 'part 1/3'); await assertContains(currentSpread, 'total payé 28,00');
   if (!(await page.locator('#currentWeekChartButton').isVisible())) throw new Error('The current week must expose its chart without adding another navigation entry');
   await page.locator('#currentWeekChartButton').click(); await page.locator('#weekChartDialog').waitFor({ state: 'visible' });
   await assertContains(page.locator('#weekChartPeriod'), '→'); await assertContains(page.locator('#weekChartSpent'), '9,33'); await assertContains(page.locator('#weekChartBars'), 'Non précisé');
@@ -670,6 +694,18 @@ try {
   await assertContains(page.locator('#weekReservedTotal'), '0,00'); await assertContains(page.locator('#weekRefundTotal'), '0,00'); await assertContains(page.locator('#weekNetTotal'), '9,33');
   const storedSpread = await page.evaluate(async () => { const saved = await RebootSecureStorage.read('reboot-local-v1', 'reboot-local-v1'); return { expenses: saved.expenses.filter(item => !item.deletedAt && item.label === 'Achat étalé'), allocations: saved.allocations.filter(item => !item.deletedAt && saved.expenses.find(expense => expense.id === item.transactionId)?.label === 'Achat étalé') }; });
   if (storedSpread.expenses.length !== 1 || storedSpread.expenses[0].amountMinor !== 2800 || storedSpread.allocations.map(item => item.amountMinor).join(',') !== '933,933,934') throw new Error('A spread expense must remain one real transaction with exact weekly allocations');
+  await page.evaluate(async () => {
+    const saved = await RebootSecureStorage.read('reboot-local-v1', 'reboot-local-v1'), engine = RebootBudgetEngine, current = engine.cycleStartForDate(engine.dateKey(new Date()), saved.rebootDay), expense = saved.expenses.find(item => item.label === 'Achat étalé'), allocations = saved.allocations.filter(item => item.transactionId === expense.id && !item.deletedAt).sort((a, b) => a.sequence - b.sequence);
+    expense.date = engine.addDays(current, -7);
+    allocations.forEach((allocation, index) => { allocation.cycleStart = engine.addDays(current, (index - 1) * 7); allocation.cycleId = engine.cycleIdForStart(allocation.cycleStart); });
+    await RebootSecureStorage.save('reboot-local-v1', saved);
+  });
+  await page.reload({ waitUntil: 'networkidle' });
+  const carriedSpread = page.locator('#expenseList article', { hasText: 'Achat étalé' }); await assertContains(carriedSpread.locator('.expense-amount'), '9,33'); await assertContains(carriedSpread, 'part 2/3'); await assertContains(carriedSpread, 'total payé 28,00'); await assertContains(page.locator('#remaining'), '90,67');
+  await page.goto(`${baseUrl}/app.html#movements`, { waitUntil: 'networkidle' });
+  if ((await page.locator('#allMovementsList article', { hasText: 'Achat étalé' }).count()) !== 2) throw new Error('Movements must show every elapsed weekly share of a spread transaction');
+  await assertContains(page.locator('#allMovementsList article', { hasText: 'part 2/3' }).locator('.expense-amount'), '9,33');
+  await page.goto(`${baseUrl}/app.html#week`, { waitUntil: 'networkidle' });
   await page.locator('#expenseList article', { hasText: 'Achat étalé' }).locator('[data-edit-expense]').click();
   if (await page.locator('#expenseAmount').isEnabled() || await page.locator('#expenseDate').isEnabled()) throw new Error('An existing spread must require delete-and-recreate for structural changes');
   await assertContains(page.locator('#spreadLock'), 'supprimez la dépense puis recréez-la'); await page.locator('#expenseDialog .close-button').click();
@@ -678,7 +714,7 @@ try {
   acceptConfirmation(page); await page.locator('#expenseList article', { hasText: 'Achat étalé' }).locator('[data-delete]').click();
   const deletedSpread = await page.evaluate(async () => { const saved = await RebootSecureStorage.read('reboot-local-v1', 'reboot-local-v1'), expense = saved.expenses.find(item => item.label === 'Achat étalé'); return { expenseDeleted: Boolean(expense.deletedAt), allocationsDeleted: saved.allocations.filter(item => item.transactionId === expense.id).every(item => item.deletedAt) }; });
   if (!deletedSpread.expenseDeleted || !deletedSpread.allocationsDeleted) throw new Error('Deleting a spread must tombstone its transaction and every allocation');
-  console.log('PASS current-week spending stays compact, expands into an exact breakdown and follows weekly allocations');
+  console.log('PASS current-week spending stays compact, expands into an exact breakdown and displays every elapsed spread share');
   console.log('PASS manual spread previews cents, affects only the current allocation, warns, locks structural edits and deletes atomically');
 
   await page.goto(`${baseUrl}/verifier.html`, { waitUntil: 'networkidle' });
